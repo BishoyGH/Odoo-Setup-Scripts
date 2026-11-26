@@ -59,6 +59,11 @@ jobs:
           $zip = Get-ChildItem C:\OdooBackups -Recurse -Filter *.zip | Select-Object -First 1
           if (-not $zip) { throw 'No backup ZIP created' }
           "Backup: $($zip.FullName) ($([math]::Round($zip.Length/1MB,1)) MB)"
+          # The first backup also makes the second copy and runs the test-restore.
+          if (-not (Get-ChildItem C:\OdooBackupsCopy -Recurse -Filter *.zip)) { throw 'No second copy created' }
+          $status = Get-Content -Raw C:\Odoo\logs\last-backup.json | ConvertFrom-Json
+          if (-not $status.TestRestore.Ok) { throw "Test-restore failed: $($status.TestRestore.Message)" }
+          if (-not (Get-ScheduledTask -TaskName 'Odoo Backup Check' -ErrorAction SilentlyContinue)) { throw 'Backup check task missing' }
           .\setup.ps1 -Action Status
 
       - name: Upload logs

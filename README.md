@@ -113,14 +113,34 @@ Each ZIP contains `dump.sql`, `filestore/` and `manifest.json`, the same
 format as Odoo's own database manager, so it can also be restored from
 `/web/database/manager` on any Odoo server, Windows or Linux.
 
+**Second copy (optional).** Setup can also copy every backup to a USB drive or
+another partition. The copy is checked byte for byte (SHA-256) and the same
+retention applies there. If the USB drive is unplugged at backup time, the
+main backup still runs and you get a warning.
+
+**Weekly test-restore.** Once a week (setting `Backup.TestRestoreDays`, 0 turns
+it off) the new backup is restored into a throwaway database
+(`<database>_restore_test`), checked (base module installed, a company and
+users present, the same modules as the backup manifest, every attachment file
+present) and dropped again. A failed test-restore is retried after the next
+backup. Odoo never serves this database: production only serves its own
+database, and the copy's scheduled jobs and mail servers are switched off.
+
+**Warnings.** When a backup, the second copy or the test-restore fails, or the
+last good backup is older than 2 days, a warning window appears on the desktop
+of whoever is signed in (at sign-in, every morning at 09:00, and right after a
+failed backup), an error is written to the Windows Application log (source
+`OdooBackup`), and Status shows what is wrong.
+
 * Back up now: setup menu, or `C:\Odoo\tools\odoo-ctl.ps1 backup`
+* Test-restore now: `C:\Odoo\tools\odoo-ctl.ps1 test-restore`
 * Restore: setup menu, **Restore from a backup**
-* Log: `C:\Odoo\logs\backup.log`
+* Log: `C:\Odoo\logs\backup.log`; latest result: `C:\Odoo\logs\last-backup.json`
 
 ## Everyday commands
 
 ```powershell
-C:\Odoo\tools\odoo-ctl.ps1 status          # services, URL, last backup
+C:\Odoo\tools\odoo-ctl.ps1 status          # services, URL, last backup and backup health
 C:\Odoo\tools\odoo-ctl.ps1 restart
 C:\Odoo\tools\odoo-ctl.ps1 logs            # follow the Odoo log
 C:\Odoo\tools\odoo-ctl.ps1 update -Modules my_module   # after changing module code

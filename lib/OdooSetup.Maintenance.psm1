@@ -23,12 +23,21 @@ function Show-OdooStatus {
     Write-KeyValue 'Web' ('{0}  {1}' -f $url, $(if ($ok) { '(responding)' } else { '(not responding)' }))
     if ($Settings.Backup -and $Settings.Backup.Enabled) {
         Write-KeyValue 'Backups' ('{0} daily at {1}, keep {2} days' -f $Settings.Backup.Dir, $Settings.Backup.Time, $Settings.Backup.RetentionDays)
+        $copyDir = [string](Get-SettingValue $Settings.Backup 'CopyDir' '')
+        $testDays = [int](Get-SettingValue $Settings.Backup 'TestRestoreDays' 7)
+        Write-KeyValue 'Second copy' $(if ($copyDir) { $copyDir } else { 'none' })
+        $status = $null
         $last = Join-Path $Paths.Logs 'last-backup.json'
-        if (Test-Path $last) {
-            $b = Get-Content -Raw $last | ConvertFrom-Json
-            Write-KeyValue 'Last backup' ('{0} ({1} MB)' -f $b.LastSuccess, $b.SizeMB)
-        }
+        if (Test-Path $last) { $status = Get-Content -Raw $last -Encoding UTF8 | ConvertFrom-Json }
+        $lastOk = Get-SettingValue $status 'LastSuccess'
+        if ($lastOk) { Write-KeyValue 'Last backup' ('{0} ({1} MB)' -f $lastOk, (Get-SettingValue $status 'SizeMB')) }
         else { Write-KeyValue 'Last backup' 'none yet' }
+        $tr = Get-SettingValue $status 'TestRestore'
+        $trRun = Get-SettingValue $tr 'LastRun'
+        if ($trRun) { Write-KeyValue 'Last test-restore' ('{0} ({1})' -f $trRun, $(if (Get-SettingValue $tr 'Ok' $false) { 'passed' } else { 'FAILED' })) }
+        $health = Get-BackupHealth -Status $status -CopyConfigured ([bool]$copyDir) -TestRestoreDays $testDays
+        if ($health.Level -eq 'OK') { Write-Ok 'Backups are healthy' }
+        else { foreach ($m in $health.Messages) { if ($health.Level -eq 'Error') { Write-Fail $m } else { Write-Warn $m } } }
         $drive = Split-Path $Settings.Backup.Dir -Qualifier
         $d = Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='{0}'" -f $drive) -ErrorAction SilentlyContinue
         if ($d) { Write-KeyValue ('Free on ' + $drive) ('{0} GB' -f [Math]::Round($d.FreeSpace / 1GB, 1)) }
@@ -55,6 +64,34 @@ function Select-BackupFolder {
     $suggested = $drives[$i].Letter + '\OdooBackups'
     if ($Default -and ($Default.StartsWith($drives[$i].Letter))) { $suggested = $Default }
     return (Read-Value -Prompt 'Backup folder' -Default $suggested -Validate { param($v) $v -match '^[A-Za-z]:\\' })
+}
+
+function Select-BackupCopyFolder {
+    <#
+      Picks the folder for the second copy: USB drives and other partitions,
+      never the drive that already holds the main backups.
+    #>
+    [CmdletBinding()]
+    param([string]$PrimaryDir = '')
+    $primary = ''
+    if ($PrimaryDir) { $primary = Split-Path $PrimaryDir -Qualifier }
+    $drives = @(Get-CimInstance -ClassName Win32_LogicalDisk -Filter 'DriveType=2 OR DriveType=3' |
+            Where-Object { $_.DeviceID -ne $primary -and $_.Size } |
+            Sort-Object -Property @{ Expression = { $_.DriveType -ne 2 } }, DeviceID)
+    if ($drives.Count -eq 0) {
+        Write-Warn 'No other drive found. Plug in a USB drive and run Repair later to add a second copy.'
+        return ''
+    }
+    $labels = foreach ($d in $drives) {
+        $kind = $(if ($d.DriveType -eq 2) { 'USB / removable' } else { 'fixed disk' })
+        if ($d.DeviceID -eq $env:SystemDrive) { $kind += ', Windows drive' }
+        '{0}  {1,-14} {2,7} GB free  ({3})' -f $d.DeviceID, ('"' + $d.VolumeName + '"'), [Math]::Round($d.FreeSpace / 1GB, 1), $kind
+    }
+    $i = Read-Choice -Prompt 'Where should the second copy go?' -Options $labels -DefaultIndex 0
+    if ($drives[$i].DriveType -eq 2) {
+        Write-Info 'Keep the USB drive plugged in at backup time. If it is missing, you will see a warning on the desktop.'
+    }
+    return (Read-Value -Prompt 'Second-copy folder' -Default ($drives[$i].DeviceID + '\OdooBackups') -Validate { param($v) $v -match '^[A-Za-z]:\\' })
 }
 
 function Invoke-OdooRestore {

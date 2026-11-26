@@ -9,10 +9,11 @@
   odoo-ctl.ps1 update -Modules sale,stock      # upgrade modules after copying new code
   odoo-ctl.ps1 update -Modules all
   odoo-ctl.ps1 backup
+  odoo-ctl.ps1 test-restore                    # back up now and prove the backup restores
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Position = 0)][ValidateSet('status', 'start', 'stop', 'restart', 'logs', 'update', 'backup', 'open')]
+    [Parameter(Position = 0)][ValidateSet('status', 'start', 'stop', 'restart', 'logs', 'update', 'backup', 'test-restore', 'open')]
     [string]$Command = 'status',
     [string]$Modules = '',
     [string]$Root = 'C:\Odoo'
@@ -39,11 +40,20 @@ function Show-Status {
     }
     Write-Host ('  URL             http://localhost:{0}' -f $settings.HttpPort)
     $last = Join-Path $paths.Logs 'last-backup.json'
-    if (Test-Path $last) {
-        $b = Get-Content -Raw $last | ConvertFrom-Json
-        Write-Host ('  Last backup     {0}  ({1} MB)' -f $b.LastSuccess, $b.SizeMB)
+    $status = $null
+    if (Test-Path $last) { $status = Get-Content -Raw $last -Encoding UTF8 | ConvertFrom-Json }
+    $lastOk = Get-SettingValue $status 'LastSuccess'
+    if ($lastOk) { Write-Host ('  Last backup     {0}  ({1} MB)' -f $lastOk, (Get-SettingValue $status 'SizeMB')) }
+    if ($settings.Backup.Enabled) {
+        $health = Get-BackupHealth -Status $status `
+            -CopyConfigured ([bool][string](Get-SettingValue $settings.Backup 'CopyDir' '')) `
+            -TestRestoreDays ([int](Get-SettingValue $settings.Backup 'TestRestoreDays' 7))
+        if ($health.Level -eq 'OK') { Write-Host '  Backups         healthy' -ForegroundColor Green }
+        else {
+            $color = $(if ($health.Level -eq 'Error') { 'Red' } else { 'Yellow' })
+            foreach ($m in $health.Messages) { Write-Host ('  Backups         {0}' -f $m) -ForegroundColor $color }
+        }
     }
-    elseif ($settings.Backup.Enabled) { Write-Host '  Last backup     none yet' -ForegroundColor Yellow }
     Write-Host ''
 }
 
@@ -67,5 +77,6 @@ switch ($Command) {
         Show-Status
     }
     'backup' { & (Join-Path $PSScriptRoot 'backup.ps1') -Root $Root }
+    'test-restore' { & (Join-Path $PSScriptRoot 'backup.ps1') -Root $Root -TestRestore }
     'open' { Start-Process ('http://localhost:{0}/web' -f $settings.HttpPort) }
 }

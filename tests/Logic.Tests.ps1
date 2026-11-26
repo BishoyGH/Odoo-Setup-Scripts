@@ -138,6 +138,100 @@ Describe 'Backup naming and retention' {
     }
 }
 
+Describe 'Backup health' {
+    BeforeAll {
+        $now = [datetime]'2026-03-31T09:00:00'
+        function New-Status {
+            param($LastSuccess = '2026-03-30T22:00:00', $LastErrorAt = $null, $Copy = $null, $TestRestore = $null)
+            if ($null -eq $Copy) { $Copy = @{ LastSuccess = '2026-03-30T22:05:00' } }
+            if ($null -eq $TestRestore) { $TestRestore = @{ LastRun = '2026-03-28T22:10:00'; Ok = $true } }
+            return @{ LastSuccess = $LastSuccess; LastErrorAt = $LastErrorAt; LastError = 'disk full'; Copy = $Copy; TestRestore = $TestRestore }
+        }
+    }
+    It 'is OK after a recent backup, copy and test-restore' {
+        $h = Get-BackupHealth -Status (New-Status) -Now $now -CopyConfigured $true
+        $h.Level | Should -Be 'OK'
+        $h.Messages.Count | Should -Be 0
+    }
+    It 'is Unknown before the first backup runs' {
+        (Get-BackupHealth -Status $null -Now $now).Level | Should -Be 'Unknown'
+    }
+    It 'is an error when the last good backup is older than 2 days' {
+        $h = Get-BackupHealth -Status (New-Status -LastSuccess '2026-03-28T08:00:00') -Now $now
+        $h.Level | Should -Be 'Error'
+        $h.Messages[0] | Should -Match '3 days old'
+    }
+    It 'is an error when the latest run failed, even if the last good one is recent' {
+        $h = Get-BackupHealth -Status (New-Status -LastErrorAt '2026-03-31T08:00:00') -Now $now
+        $h.Level | Should -Be 'Error'
+        $h.Messages -join ' ' | Should -Match 'disk full'
+    }
+    It 'ignores an old failure that a later backup fixed' {
+        (Get-BackupHealth -Status (New-Status -LastErrorAt '2026-03-29T22:00:00') -Now $now).Level | Should -Be 'OK'
+    }
+    It 'is an error when no backup ever succeeded' {
+        (Get-BackupHealth -Status (New-Status -LastSuccess $null -LastErrorAt '2026-03-31T08:00:00') -Now $now).Level | Should -Be 'Error'
+    }
+    It 'warns when the second copy failed (USB drive unplugged)' {
+        $copy = @{ LastSuccess = '2026-03-25T22:05:00'; LastErrorAt = '2026-03-30T22:05:00'; LastError = 'Drive E: is not connected.' }
+        $h = Get-BackupHealth -Status (New-Status -Copy $copy) -Now $now -CopyConfigured $true
+        $h.Level | Should -Be 'Warning'
+        $h.Messages[0] | Should -Match 'not connected'
+    }
+    It 'does not check the copy when none is configured' {
+        $copy = @{ LastErrorAt = '2026-03-30T22:05:00' }
+        (Get-BackupHealth -Status (New-Status -Copy $copy) -Now $now -CopyConfigured $false).Level | Should -Be 'OK'
+    }
+    It 'is an error when the test-restore failed' {
+        $tr = @{ LastRun = '2026-03-30T22:10:00'; Ok = $false; Message = 'base module not installed' }
+        $h = Get-BackupHealth -Status (New-Status -TestRestore $tr) -Now $now
+        $h.Level | Should -Be 'Error'
+        $h.Messages[0] | Should -Match 'test-restore'
+    }
+    It 'warns when the test-restore has not run for two intervals' {
+        $tr = @{ LastRun = '2026-03-10T22:10:00'; Ok = $true }
+        (Get-BackupHealth -Status (New-Status -TestRestore $tr) -Now $now -TestRestoreDays 7).Level | Should -Be 'Warning'
+        (Get-BackupHealth -Status (New-Status -TestRestore $tr) -Now $now -TestRestoreDays 0).Level | Should -Be 'OK'
+    }
+    It 'passes on a test-restore warning such as missing attachments' {
+        $tr = @{ LastRun = '2026-03-30T22:10:00'; Ok = $true; Warning = '2 of 900 attachment files are not in the backup.' }
+        $h = Get-BackupHealth -Status (New-Status -TestRestore $tr) -Now $now
+        $h.Level | Should -Be 'Warning'
+        $h.Messages[0] | Should -Match 'attachment'
+    }
+    It 'reads a status file in the old format (LastSuccess only)' {
+        $old = '{ "LastSuccess": "2026-03-30T22:00:00", "File": "x.zip", "SizeMB": 12.5 }' | ConvertFrom-Json
+        (Get-BackupHealth -Status $old -Now $now).Level | Should -Be 'OK'
+    }
+}
+
+Describe 'Test-restore schedule' {
+    BeforeAll { $now = [datetime]'2026-03-31T22:00:00' }
+    It 'runs when it never ran' { Test-TestRestoreDue -LastRun $null -Now $now | Should -BeTrue }
+    It 'waits for the interval' { Test-TestRestoreDue -LastRun '2026-03-28T22:00:00' -Now $now | Should -BeFalse }
+    It 'runs after a week, even if the daily backup starts a little early' {
+        Test-TestRestoreDue -LastRun '2026-03-24T22:30:00' -Now $now | Should -BeTrue
+    }
+    It 'retries on the next backup after a failure' {
+        Test-TestRestoreDue -LastRun '2026-03-30T22:00:00' -LastRunOk $false -Now $now | Should -BeTrue
+    }
+    It 'never runs when switched off' { Test-TestRestoreDue -LastRun $null -IntervalDays 0 -Now $now | Should -BeFalse }
+    It 'names the throwaway database within the PostgreSQL limit' {
+        Get-TestRestoreDbName -DbName 'shop' | Should -Be 'shop_restore_test'
+        (Get-TestRestoreDbName -DbName ('a' * 63)).Length | Should -BeLessOrEqual 63
+    }
+}
+
+Describe 'Get-SettingValue' {
+    It 'returns the default for settings written by an older version' {
+        $old = '{ "Backup": { "Enabled": true } }' | ConvertFrom-Json
+        Get-SettingValue $old.Backup 'CopyDir' '' | Should -Be ''
+        Get-SettingValue $old.Backup 'Enabled' $false | Should -BeTrue
+        Get-SettingValue @{ TestRestoreDays = 3 } 'TestRestoreDays' 7 | Should -Be 3
+        Get-SettingValue $null 'x' 'd' | Should -Be 'd'
+    }
+}
+
 Describe 'Database names' {
     It 'suggests <Expected> for "<Company>"' -ForEach @(
         @{ Company = 'Al Nour Trading Co.'; Expected = 'al_nour_trading_co' }

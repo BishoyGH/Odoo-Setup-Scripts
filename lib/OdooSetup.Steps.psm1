@@ -10,6 +10,8 @@ $script:PgServiceName = 'OdooPostgreSQL'
 $script:OdooServiceName = 'odoo'
 $script:FirewallRuleName = 'OdooSetup-HTTP'
 $script:BackupTaskName = 'Odoo Daily Backup'
+$script:BackupCheckTaskName = 'Odoo Backup Check'
+$script:SidUsers = 'S-1-5-32-545'
 
 function Get-PgServiceName { return $script:PgServiceName }
 function Get-OdooServiceName { return $script:OdooServiceName }
@@ -700,6 +702,7 @@ function Copy-OdooTools {
     New-Item -ItemType Directory -Path $Paths.Tools -Force | Out-Null
     $root = Split-Path $PSScriptRoot -Parent
     Copy-Item (Join-Path $root 'scripts\backup.ps1') $Paths.Tools -Force
+    Copy-Item (Join-Path $root 'scripts\backup-check.ps1') $Paths.Tools -Force
     Copy-Item (Join-Path $root 'scripts\odoo-ctl.ps1') $Paths.Tools -Force
     Copy-Item (Join-Path $root 'lib\OdooSetup.Logic.psm1') $Paths.Tools -Force
 }
@@ -744,11 +747,37 @@ function Register-BackupTask {
         -ExecutionTimeLimit (New-TimeSpan -Hours 4) -MultipleInstances IgnoreNew -RestartCount 2 -RestartInterval (New-TimeSpan -Minutes 15)
     Register-ScheduledTask -TaskName $script:BackupTaskName -Action $action -Trigger $trigger -Principal $principal `
         -Settings $settings -Description 'Daily Odoo database + filestore backup (Odoo-Setup-Scripts)' -Force | Out-Null
+    Register-BackupCheckTask -Paths $Paths
+}
+
+function Register-BackupCheckTask {
+    <#
+      Desktop warning when backups fail or go stale. Runs as the signed-in
+      user (Users group, interactive) so the message appears on screen: at
+      sign-in, every morning at 09:00, and when backup.ps1 starts it after a
+      failure.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][System.Collections.IDictionary]$Paths)
+    $checkScript = Join-Path $Paths.Tools 'backup-check.ps1'
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+        -Argument ('-NoProfile -ExecutionPolicy Bypass -NonInteractive -WindowStyle Hidden -File "{0}" -Root "{1}"' -f $checkScript, $Paths.Root)
+    $logon = New-ScheduledTaskTrigger -AtLogOn
+    $logon.Delay = 'PT2M'   # let the desktop settle first
+    $morning = New-ScheduledTaskTrigger -Daily -At ([datetime]::ParseExact('09:00', 'HH:mm', $null))
+    $users = (New-Object System.Security.Principal.SecurityIdentifier($script:SidUsers)).Translate([System.Security.Principal.NTAccount]).Value
+    $principal = New-ScheduledTaskPrincipal -GroupId $users -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 12) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName $script:BackupCheckTaskName -Action $action -Trigger @($logon, $morning) -Principal $principal `
+        -Settings $settings -Description 'Warns on the desktop when Odoo backups fail or are out of date (Odoo-Setup-Scripts)' -Force | Out-Null
 }
 
 function Unregister-BackupTask {
-    if (Get-ScheduledTask -TaskName $script:BackupTaskName -ErrorAction SilentlyContinue) {
-        Unregister-ScheduledTask -TaskName $script:BackupTaskName -Confirm:$false
+    foreach ($name in @($script:BackupTaskName, $script:BackupCheckTaskName)) {
+        if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false
+        }
     }
 }
 

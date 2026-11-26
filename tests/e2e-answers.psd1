@@ -13,5 +13,5 @@
     OcaBundles    = @('ux', 'reports')
     Defender      = $false
     DisableSleep  = $false
-    Backup        = @{ Enabled = $true; Dir = 'C:\OdooBackups'; Time = '22:00'; RetentionDays = 7 }
+    Backup        = @{ Enabled = $true; Dir = 'C:\OdooBackups'; Time = '22:00'; RetentionDays = 7; CopyDir = 'C:\OdooBackupsCopy'; TestRestoreDays = 7 }
 }

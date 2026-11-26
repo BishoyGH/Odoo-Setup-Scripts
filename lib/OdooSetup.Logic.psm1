@@ -229,6 +229,131 @@ function Select-BackupsToPrune {
     return @($sorted | Select-Object -Skip $KeepMinimum | Where-Object { $_.LastWriteTime -lt $cutoff })
 }
 
+function Get-SettingValue {
+    <#
+      Reads a property from settings.json output (PSCustomObject or hashtable)
+      and returns Default when it is missing, so settings written by an older
+      version still work under StrictMode.
+    #>
+    [CmdletBinding()]
+    param([AllowNull()]$Object, [Parameter(Mandatory)][string]$Name, $Default = $null)
+    if ($null -eq $Object) { return $Default }
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name) -and $null -ne $Object[$Name]) { return $Object[$Name] }
+        return $Default
+    }
+    $p = $Object.PSObject.Properties[$Name]
+    if ($p -and $null -ne $p.Value) { return $p.Value }
+    return $Default
+}
+
+function ConvertTo-NullableDate {
+    [CmdletBinding()]
+    param([AllowNull()]$Value)
+    if ($null -eq $Value -or [string]$Value -eq '') { return $null }
+    if ($Value -is [datetime]) { return $Value }
+    return [datetime]::Parse([string]$Value, [Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Get-TestRestoreDbName {
+    <# Throwaway database used by the weekly test-restore. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$DbName)
+    $name = $DbName + '_restore_test'
+    if ($name.Length -gt 63) { $name = $DbName.Substring(0, 63 - 13) + '_restore_test' }
+    return $name
+}
+
+function Test-TestRestoreDue {
+    <#
+      True when the weekly test-restore should run now: never run, last run
+      failed (retry on the next backup), or the interval has passed. Twelve
+      hours of slack so a daily backup a few minutes early does not skip a day.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]$LastRun,
+        [bool]$LastRunOk = $true,
+        [int]$IntervalDays = 7,
+        [datetime]$Now = (Get-Date)
+    )
+    if ($IntervalDays -le 0) { return $false }
+    $last = ConvertTo-NullableDate $LastRun
+    if ($null -eq $last -or -not $LastRunOk) { return $true }
+    return ($Now -ge $last.AddDays($IntervalDays).AddHours(-12))
+}
+
+function Get-BackupHealth {
+    <#
+      Turns the backup status file (logs\last-backup.json) into a verdict.
+      Level: OK, Unknown (no backup has run yet), Warning or Error.
+      Messages explain every problem in plain words for Status and the
+      desktop warning.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]$Status,
+        [datetime]$Now = (Get-Date),
+        [int]$MaxAgeHours = 48,
+        [bool]$CopyConfigured = $false,
+        [int]$TestRestoreDays = 7
+    )
+    if ($null -eq $Status) {
+        return [pscustomobject]@{ Level = 'Unknown'; Messages = @('No backup has run yet.') }
+    }
+    $errors = New-Object System.Collections.Generic.List[string]
+    $warnings = New-Object System.Collections.Generic.List[string]
+
+    $lastOk = ConvertTo-NullableDate (Get-SettingValue $Status 'LastSuccess')
+    $lastErrAt = ConvertTo-NullableDate (Get-SettingValue $Status 'LastErrorAt')
+    $lastErr = [string](Get-SettingValue $Status 'LastError' '')
+
+    if ($null -eq $lastOk) {
+        $errors.Add('No backup has ever succeeded.')
+    }
+    elseif (($Now - $lastOk).TotalHours -gt $MaxAgeHours) {
+        $errors.Add(('The last good backup is {0} days old ({1}).' -f [Math]::Floor(($Now - $lastOk).TotalDays), $lastOk.ToString('yyyy-MM-dd HH:mm')))
+    }
+    if ($lastErrAt -and ($null -eq $lastOk -or $lastErrAt -gt $lastOk)) {
+        $errors.Add(('The last backup failed on {0}: {1}' -f $lastErrAt.ToString('yyyy-MM-dd HH:mm'), $lastErr))
+    }
+
+    if ($CopyConfigured -and $lastOk) {
+        $copy = Get-SettingValue $Status 'Copy'
+        $copyOk = ConvertTo-NullableDate (Get-SettingValue $copy 'LastSuccess')
+        $copyErrAt = ConvertTo-NullableDate (Get-SettingValue $copy 'LastErrorAt')
+        $copyErr = [string](Get-SettingValue $copy 'LastError' '')
+        if ($copyErrAt -and ($null -eq $copyOk -or $copyErrAt -gt $copyOk)) {
+            $warnings.Add(('The second copy failed on {0}: {1}' -f $copyErrAt.ToString('yyyy-MM-dd HH:mm'), $copyErr))
+        }
+        elseif ($null -eq $copyOk) {
+            $warnings.Add('No second copy has been made yet.')
+        }
+        elseif (($Now - $copyOk).TotalHours -gt $MaxAgeHours) {
+            $warnings.Add(('The second copy is {0} days old.' -f [Math]::Floor(($Now - $copyOk).TotalDays)))
+        }
+    }
+
+    if ($TestRestoreDays -gt 0) {
+        $tr = Get-SettingValue $Status 'TestRestore'
+        $trRun = ConvertTo-NullableDate (Get-SettingValue $tr 'LastRun')
+        $trOk = [bool](Get-SettingValue $tr 'Ok' $false)
+        if ($trRun -and -not $trOk) {
+            $errors.Add(('The test-restore on {0} failed: {1}' -f $trRun.ToString('yyyy-MM-dd HH:mm'), [string](Get-SettingValue $tr 'Message' '')))
+        }
+        elseif ($trRun -and ($Now - $trRun).TotalDays -gt (2 * $TestRestoreDays)) {
+            $warnings.Add(('No test-restore for {0} days.' -f [Math]::Floor(($Now - $trRun).TotalDays)))
+        }
+        $trWarn = [string](Get-SettingValue $tr 'Warning' '')
+        if ($trRun -and $trOk -and $trWarn) { $warnings.Add($trWarn) }
+    }
+
+    $level = 'OK'
+    if ($warnings.Count -gt 0) { $level = 'Warning' }
+    if ($errors.Count -gt 0) { $level = 'Error' }
+    return [pscustomobject]@{ Level = $level; Messages = @($errors) + @($warnings) }
+}
+
 function Test-DatabaseName {
     [CmdletBinding()]
     param([AllowEmptyString()][string]$Name)

@@ -62,7 +62,7 @@ function Get-DefaultSettings {
         Defender       = $true
         DisableSleep   = $true
         MakeNetworkPrivate = $false
-        Backup         = [ordered]@{ Enabled = $false; Dir = ''; Time = '22:00'; RetentionDays = 14 }
+        Backup         = [ordered]@{ Enabled = $false; Dir = ''; Time = '22:00'; RetentionDays = 14; CopyDir = ''; TestRestoreDays = 7 }
     }
 }
 
@@ -127,6 +127,10 @@ function Read-InstallSettings {
             $s.Backup.Time = Read-Value -Prompt 'Daily backup time (24h, HH:mm). If the PC is off it runs at next start' -Default $s.Backup.Time `
                 -Validate { param($v) $v -match '^([01]\d|2[0-3]):[0-5]\d$' }
             $s.Backup.RetentionDays = [int](Read-Value -Prompt 'Keep backups for how many days?' -Default '14' -Validate { param($v) $v -match '^\d+$' -and [int]$v -ge 1 -and [int]$v -le 3650 })
+            Write-Host '   A second copy on a USB drive or another disk survives a failed disk, theft or ransomware on this one.' -ForegroundColor Gray
+            if (Read-YesNo -Prompt 'Also copy every backup to a second drive?' -Default $true) {
+                $s.Backup.CopyDir = Select-BackupCopyFolder -PrimaryDir $s.Backup.Dir
+            }
         }
         $s.Defender = Read-YesNo -Prompt 'Add Windows Defender exclusions for the database and attachments (faster)?' -Default $true
         $s.DisableSleep = Read-YesNo -Prompt 'Prevent this PC from sleeping while plugged in (needed for a server)?' -Default $true
@@ -165,6 +169,10 @@ function Show-Summary {
         $b = 'disabled'
         if ($S.Backup.Enabled) { $b = '{0} daily at {1}, keep {2} days' -f $S.Backup.Dir, $S.Backup.Time, $S.Backup.RetentionDays }
         Write-KeyValue 'Backups' $b
+        if ($S.Backup.Enabled) {
+            Write-KeyValue 'Second copy' $(if ($S.Backup.CopyDir) { $S.Backup.CopyDir } else { 'none' })
+            Write-KeyValue 'Test-restore' $(if ($S.Backup.TestRestoreDays -gt 0) { 'every {0} days' -f $S.Backup.TestRestoreDays } else { 'off' })
+        }
     }
 }
 
@@ -274,6 +282,15 @@ function Invoke-Install {
                 Protect-Folder -Path $S.Backup.Dir
                 Register-BackupTask -Paths $P -Time $S.Backup.Time
                 Write-Ok ('Daily backup at {0} to {1}' -f $S.Backup.Time, $S.Backup.Dir)
+                if ($S.Backup.CopyDir) {
+                    if (Test-Path ((Split-Path $S.Backup.CopyDir -Qualifier) + '\')) {
+                        New-Item -ItemType Directory -Path $S.Backup.CopyDir -Force | Out-Null
+                        try { Protect-Folder -Path $S.Backup.CopyDir }
+                        catch { Write-Warn 'Could not restrict access to the second-copy folder (FAT/exFAT drives have no permissions).' }
+                        Write-Ok ('Second copy of every backup to {0}' -f $S.Backup.CopyDir)
+                    }
+                    else { Write-Warn ('Second-copy drive {0} is not connected; plug it in before the next backup.' -f (Split-Path $S.Backup.CopyDir -Qualifier)) }
+                }
             }
             else { Unregister-BackupTask }
             if ($S.Defender) { if (Set-DefenderExclusions -Paths $P) { Write-Ok 'Defender exclusions added' } }
