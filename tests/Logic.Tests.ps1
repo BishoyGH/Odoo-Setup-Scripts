@@ -1,3 +1,7 @@
+# Pester shares variables between BeforeAll and It blocks, which the analyzer cannot see.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '')]
+param()
+
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..\lib\OdooSetup.Logic.psm1') -Force
 }

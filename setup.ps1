@@ -32,6 +32,7 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $here = $PSScriptRoot
+$script:InstallRoot = $Root
 Import-Module (Join-Path $here 'lib\OdooSetup.Maintenance.psm1') -Force -DisableNameChecking
 
 $script:Components = Import-PowerShellDataFile (Join-Path $here 'config\components.psd1')
@@ -43,7 +44,7 @@ $script:Unattended = [bool]$ConfigFile
 function Get-DefaultSettings {
     $ram = Get-TotalMemoryGB
     return [ordered]@{
-        Root           = $Root
+        Root           = $script:InstallRoot
         Mode           = 'prod'
         OdooVersion    = $script:Components.DefaultVersion
         RamProfile     = (Get-RamProfileName -TotalMemoryGB $ram)
@@ -321,7 +322,7 @@ function Invoke-Action {
     switch ($Name) {
         'Install' {
             $s = Get-DefaultSettings
-            $P0 = Get-InstallPaths -Root $Root
+            $P0 = Get-InstallPaths -Root $script:InstallRoot
             $previous = Read-JsonFile $P0.Settings
             $state = $null
             if ($previous) { Initialize-State -Path $P0.State; $state = Get-SetupState }
@@ -343,17 +344,17 @@ function Invoke-Action {
             Invoke-Install -S $s
         }
         'Repair' {
-            $ctx = Get-InstalledContext $Root
+            $ctx = Get-InstalledContext $script:InstallRoot
             $s = Get-DefaultSettings; Merge-Settings -Base $s -Override $ctx.S
             Write-Info 'Repair re-checks every component, rebuilds Python packages, rewrites configs and restarts services.'
             Invoke-Install -S $s -Repair
         }
         'Backup' {
-            $ctx = Get-InstalledContext $Root
+            $ctx = Get-InstalledContext $script:InstallRoot
             & (Join-Path $ctx.P.Tools 'backup.ps1') -Root $ctx.P.Root
         }
         'Restore' {
-            $ctx = Get-InstalledContext $Root
+            $ctx = Get-InstalledContext $script:InstallRoot
             $db = Invoke-OdooRestore -Paths $ctx.P -Settings $ctx.S -Secrets $ctx.X
             if ($db -and $db -ne $ctx.S.DbName -and $ctx.S.Mode -eq 'prod') {
                 if (Read-YesNo -Prompt ('Make "{0}" the database Odoo serves (production allows one)?' -f $db) -Default $false) {
@@ -364,8 +365,8 @@ function Invoke-Action {
                 }
             }
         }
-        'Status' { $P = Get-InstallPaths -Root $Root; Show-OdooStatus -Paths $P -Settings (Read-JsonFile $P.Settings) }
-        'Uninstall' { $P = Get-InstallPaths -Root $Root; Invoke-OdooUninstall -Paths $P }
+        'Status' { $P = Get-InstallPaths -Root $script:InstallRoot; Show-OdooStatus -Paths $P -Settings (Read-JsonFile $P.Settings) }
+        'Uninstall' { $P = Get-InstallPaths -Root $script:InstallRoot; Invoke-OdooUninstall -Paths $P }
     }
 }
 

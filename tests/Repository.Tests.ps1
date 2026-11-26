@@ -1,3 +1,7 @@
+# Pester shares variables between BeforeAll and It blocks, which the analyzer cannot see.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '')]
+param()
+
 BeforeDiscovery {
     $root = Split-Path $PSScriptRoot -Parent
     $script:sources = @(Get-ChildItem $root -Recurse -Include '*.ps1', '*.psm1', '*.psd1' |
