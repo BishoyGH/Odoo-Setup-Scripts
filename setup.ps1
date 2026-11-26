@@ -63,6 +63,8 @@ function Get-DefaultSettings {
         DisableSleep   = $true
         MakeNetworkPrivate = $false
         Backup         = [ordered]@{ Enabled = $false; Dir = ''; Time = '22:00'; RetentionDays = 14 }
+        ActiveHours    = [ordered]@{ Enabled = $true; Start = 8; End = 23 }   # production: no update restarts 08:00-23:00
+        HealthCheck    = $true                                                # production: restart Odoo if it stops answering
     }
 }
 
@@ -130,6 +132,17 @@ function Read-InstallSettings {
         }
         $s.Defender = Read-YesNo -Prompt 'Add Windows Defender exclusions for the database and attachments (faster)?' -Default $true
         $s.DisableSleep = Read-YesNo -Prompt 'Prevent this PC from sleeping while plugged in (needed for a server)?' -Default $true
+        $s.ActiveHours.Enabled = Read-YesNo -Prompt 'Stop Windows Update from restarting this PC during business hours?' -Default $true
+        if ($s.ActiveHours.Enabled) {
+            $hourOk = { param($v) $v -match '^\d{1,2}$' -and [int]$v -le 23 }
+            do {
+                $s.ActiveHours.Start = [int](Read-Value -Prompt 'Business day starts at hour (0-23)' -Default ([string]$s.ActiveHours.Start) -Validate $hourOk)
+                $s.ActiveHours.End = [int](Read-Value -Prompt 'Business day ends at hour (0-23)' -Default ([string]$s.ActiveHours.End) -Validate $hourOk)
+                $okHours = Test-ActiveHours -Start $s.ActiveHours.Start -End $s.ActiveHours.End
+                if (-not $okHours) { Write-Warn 'Windows allows at most 18 business hours, so updates can still install at night.' }
+            } until ($okHours)
+        }
+        $s.HealthCheck = Read-YesNo -Prompt 'Check Odoo every 5 minutes and restart it if it stops answering?' -Default $true
         $public = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object { $_.NetworkCategory -eq 'Public' })
         if ($public.Count -gt 0) {
             $s.MakeNetworkPrivate = Read-YesNo -Prompt ('Network "{0}" is Public, which blocks other PCs. Switch it to Private?' -f $public[0].Name) -Default $true
@@ -165,6 +178,10 @@ function Show-Summary {
         $b = 'disabled'
         if ($S.Backup.Enabled) { $b = '{0} daily at {1}, keep {2} days' -f $S.Backup.Dir, $S.Backup.Time, $S.Backup.RetentionDays }
         Write-KeyValue 'Backups' $b
+        $wu = 'not changed'
+        if ($S.ActiveHours.Enabled) { $wu = 'no restarts {0:00}:00-{1:00}:00' -f [int]$S.ActiveHours.Start, [int]$S.ActiveHours.End }
+        Write-KeyValue 'Windows Update' $wu
+        Write-KeyValue 'Health check' $(if ($S.HealthCheck) { 'every 5 minutes, restarts Odoo if needed' } else { 'off' })
     }
 }
 
@@ -199,6 +216,7 @@ function Invoke-Install {
     New-Item -ItemType Directory -Path $P.Root, $P.Logs, $P.Downloads, $P.Conf -Force | Out-Null
     $log = Start-SetupLog -LogDir $P.Logs -Prefix $(if ($Repair) { 'repair' } else { 'install' })
     Initialize-State -Path $P.State
+    Suspend-HealthCheck -Paths $P -Reason 'setup'   # the health check must not restart Odoo mid-install
     try {
         Write-Section 'Checking this PC'
         $problems = @(Test-Prerequisites -Paths $P)
@@ -259,7 +277,7 @@ function Invoke-Install {
             Install-OdooModules -Paths $P -Settings $S -Modules $sel.Modules
         }
         Invoke-SetupStep -Id 'service' -Title 'Odoo Windows service' -Run { Install-OdooService -Paths $P -Settings $S -Components $C }
-        Invoke-SetupStep -Id 'os' -Title 'Firewall, backups, Defender, power, shortcut' -Run {
+        Invoke-SetupStep -Id 'os' -Title 'Firewall, backups, updates, health check, Defender, power, shortcut' -Run {
             if ($isProd) {
                 if ($S.MakeNetworkPrivate) {
                     Get-NetConnectionProfile | Where-Object { $_.NetworkCategory -eq 'Public' } | Set-NetConnectionProfile -NetworkCategory Private
@@ -276,6 +294,16 @@ function Invoke-Install {
                 Write-Ok ('Daily backup at {0} to {1}' -f $S.Backup.Time, $S.Backup.Dir)
             }
             else { Unregister-BackupTask }
+            if ($isProd -and $S.ActiveHours.Enabled) {
+                Set-WindowsUpdateActiveHours -Start ([int]$S.ActiveHours.Start) -End ([int]$S.ActiveHours.End)
+                Write-Ok ('Windows Update will not restart this PC between {0:00}:00 and {1:00}:00' -f [int]$S.ActiveHours.Start, [int]$S.ActiveHours.End)
+            }
+            else { Remove-WindowsUpdateActiveHours }
+            if ($isProd -and $S.HealthCheck) {
+                Register-HealthCheckTask -Paths $P
+                Write-Ok 'Health check every 5 minutes (log: logs\health-check.log)'
+            }
+            else { Unregister-HealthCheckTask }
             if ($S.Defender) { if (Set-DefenderExclusions -Paths $P) { Write-Ok 'Defender exclusions added' } }
             $lnk = New-OdooShortcut -Port $S.HttpPort
             Write-Ok ('Desktop shortcut: {0}' -f $lnk)
@@ -292,7 +320,7 @@ function Invoke-Install {
         Write-Host '   Fix the problem and run setup again: finished steps are skipped automatically.' -ForegroundColor Yellow
         throw
     }
-    finally { Stop-SetupLog }
+    finally { Resume-HealthCheck -Paths $P; Stop-SetupLog }
 }
 
 function Show-Finish {

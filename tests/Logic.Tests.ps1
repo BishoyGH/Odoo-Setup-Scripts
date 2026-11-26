@@ -169,3 +169,63 @@ Describe 'Ports and paths' {
         Get-OdooServiceArguments -OdooBin 'C:\o\odoo-bin' -ConfigFile 'C:\c.conf' -Mode dev | Should -Match '--dev=reload'
     }
 }
+
+Describe 'Test-ActiveHours' {
+    It 'accepts <Start>-<End>' -ForEach @(
+        @{ Start = 8; End = 23 }, @{ Start = 9; End = 17 }, @{ Start = 6; End = 0 }, @{ Start = 22; End = 6 }, @{ Start = 0; End = 18 }
+    ) {
+        Test-ActiveHours -Start $Start -End $End | Should -BeTrue
+    }
+    It 'rejects <Start>-<End>' -ForEach @(
+        @{ Start = 8; End = 8 }, @{ Start = 0; End = 23 }, @{ Start = 5; End = 4 }, @{ Start = -1; End = 10 }, @{ Start = 8; End = 24 }
+    ) {
+        Test-ActiveHours -Start $Start -End $End | Should -BeFalse
+    }
+    It 'counts hours across midnight' {
+        Get-ActiveHoursSpan -Start 22 -End 6 | Should -Be 8
+    }
+}
+
+Describe 'Get-HealthCheckAction' {
+    It 'returns <Expected> for <Case>' -ForEach @(
+        @{ Case = 'answering'; Expected = 'ok'; P = @{ ServiceStatus = 'Running'; HttpOk = $true } }
+        @{ Case = 'paused by setup'; Expected = 'paused'; P = @{ ServiceStatus = 'Stopped'; HttpOk = $false; Paused = $true } }
+        @{ Case = 'no service'; Expected = 'missing'; P = @{ ServiceStatus = ''; HttpOk = $false } }
+        @{ Case = 'stopped'; Expected = 'start'; P = @{ ServiceStatus = 'Stopped'; HttpOk = $false } }
+        @{ Case = 'starting'; Expected = 'wait'; P = @{ ServiceStatus = 'StartPending'; HttpOk = $false } }
+        @{ Case = 'first failure'; Expected = 'wait'; P = @{ ServiceStatus = 'Running'; HttpOk = $false; PreviousFailures = 0 } }
+        @{ Case = 'second failure'; Expected = 'restart'; P = @{ ServiceStatus = 'Running'; HttpOk = $false; PreviousFailures = 1 } }
+        @{ Case = 'just started (boot)'; Expected = 'wait'; P = @{ ServiceStatus = 'Running'; HttpOk = $false; PreviousFailures = 5; ServiceUptimeMinutes = 2 } }
+        @{ Case = 'restart loop'; Expected = 'backoff'; P = @{ ServiceStatus = 'Running'; HttpOk = $false; PreviousFailures = 1; RestartsLastHour = 3 } }
+        @{ Case = 'answering after restarts'; Expected = 'ok'; P = @{ ServiceStatus = 'Running'; HttpOk = $true; RestartsLastHour = 3 } }
+    ) {
+        Get-HealthCheckAction @P | Should -Be $Expected
+    }
+}
+
+Describe 'Get-AnswersProblems' {
+    BeforeAll {
+        $versions = @('18.0', '19.0', '20.0')
+        $good = @{
+            Mode = 'prod'; OdooVersion = '19.0'; CompanyName = 'Nile Trading'; DbName = 'nile'
+            Apps = @('accounting'); OcaBundles = @('ux')
+            Backup = @{ Enabled = $true; Dir = 'D:\OdooBackups'; Time = '22:00' }
+            ActiveHours = @{ Enabled = $true; Start = 9; End = 22 }
+        }
+    }
+    It 'accepts a complete answers file' {
+        @(Get-AnswersProblems -Answers $good -OdooVersions $versions -AppKeys @('accounting') -BundleKeys @('ux')).Count | Should -Be 0
+    }
+    It 'reports <Case>' -ForEach @(
+        @{ Case = 'a typo in a setting name'; Change = @{ DbNmae = 'x' }; Pattern = 'Unknown setting "DbNmae"' }
+        @{ Case = 'an unsupported version'; Change = @{ OdooVersion = '17.0' }; Pattern = 'OdooVersion' }
+        @{ Case = 'a bad database name'; Change = @{ DbName = '1shop' }; Pattern = 'DbName' }
+        @{ Case = 'a missing backup folder'; Change = @{ Backup = @{ Enabled = $true; Dir = '' } }; Pattern = 'Backup.Dir' }
+        @{ Case = 'too many business hours'; Change = @{ ActiveHours = @{ Enabled = $true; Start = 0; End = 23 } }; Pattern = 'ActiveHours' }
+        @{ Case = 'an unknown app'; Change = @{ Apps = @('accounting', 'helpdesk') }; Pattern = 'helpdesk' }
+    ) {
+        $a = @{} + $good
+        foreach ($k in $Change.Keys) { $a[$k] = $Change[$k] }
+        (Get-AnswersProblems -Answers $a -OdooVersions $versions -AppKeys @('accounting') -BundleKeys @('ux')) -join ' ' | Should -Match ([regex]::Escape($Pattern))
+    }
+}

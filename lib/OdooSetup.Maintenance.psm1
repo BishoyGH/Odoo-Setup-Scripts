@@ -34,6 +34,18 @@ function Show-OdooStatus {
         if ($d) { Write-KeyValue ('Free on ' + $drive) ('{0} GB' -f [Math]::Round($d.FreeSpace / 1GB, 1)) }
     }
     else { Write-KeyValue 'Backups' 'disabled' }
+    $health = 'off'
+    if (Get-ScheduledTask -TaskName (Get-HealthTaskName) -ErrorAction SilentlyContinue) {
+        $health = 'every 5 minutes'
+        $hs = Join-Path $Paths.Logs 'health-check.json'
+        if (Test-Path $hs) {
+            $h = Get-Content -Raw $hs | ConvertFrom-Json
+            $health += (', last result "{0}"' -f $h.LastResult)
+            $n = @($h.Restarts | Where-Object { $_ }).Count
+            if ($n -gt 0) { $health += (', {0} restart(s) in the last hour' -f $n) }
+        }
+    }
+    Write-KeyValue 'Health check' $health
 }
 
 function Select-BackupFolder {
@@ -88,6 +100,7 @@ function Invoke-OdooRestore {
 
     $tmp = Join-Path $Paths.Root ('_restore_' + [guid]::NewGuid().ToString('N').Substring(0, 8))
     $odooSvc = Get-OdooServiceName
+    Suspend-HealthCheck -Paths $Paths -Reason 'restore'
     try {
         Write-Info 'Extracting backup...'
         Expand-Zip -Path $ZipPath -Destination $tmp
@@ -133,6 +146,7 @@ function Invoke-OdooRestore {
         if (Get-Service -Name $odooSvc -ErrorAction SilentlyContinue) {
             Start-ServiceSafe -Name $odooSvc
         }
+        Resume-HealthCheck -Paths $Paths
     }
     return $TargetDb
 }
@@ -157,6 +171,8 @@ function Invoke-OdooUninstall {
         Write-Ok 'PostgreSQL service removed'
     }
     Unregister-BackupTask; Write-Ok 'Backup task removed'
+    Unregister-HealthCheckTask; Write-Ok 'Health check task removed'
+    Remove-WindowsUpdateActiveHours
     Remove-OdooFirewallRule; Write-Ok 'Firewall rule removed'
     Remove-OdooShortcut
     if (Set-DefenderExclusions -Paths $Paths -Remove) { Write-Ok 'Defender exclusions removed' }

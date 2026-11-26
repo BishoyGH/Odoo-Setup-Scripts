@@ -27,6 +27,10 @@ Import-Module $logic -DisableNameChecking
 $paths = Get-InstallPaths -Root $Root
 $settings = Get-Content -Raw $paths.Settings -Encoding UTF8 | ConvertFrom-Json
 $services = @('OdooPostgreSQL', 'odoo')
+# While this file exists the health-check task leaves Odoo alone (see health-check.ps1).
+$pauseFile = Join-Path $paths.Logs 'health-check.pause'
+function Suspend-Health { param([string]$Reason) Set-Content -Path $pauseFile -Value $Reason -Encoding ASCII }
+function Resume-Health { Remove-Item $pauseFile -Force -ErrorAction SilentlyContinue }
 
 function Show-Status {
     Write-Host ''
@@ -49,21 +53,22 @@ function Show-Status {
 
 switch ($Command) {
     'status' { Show-Status }
-    'start' { foreach ($s in $services) { Start-Service $s }; Show-Status }
-    'stop' { Stop-Service 'odoo' -Force; Show-Status }
-    'restart' { Restart-Service 'odoo' -Force; Show-Status }
+    'start' { foreach ($s in $services) { Start-Service $s }; Resume-Health; Show-Status }
+    'stop' { Suspend-Health 'odoo-ctl stop'; Stop-Service 'odoo' -Force; Show-Status }
+    'restart' { Restart-Service 'odoo' -Force; Resume-Health; Show-Status }
     'logs' {
         $log = Get-ChildItem $paths.Logs -Filter 'odoo-service.err*.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
         if ($log) { Get-Content $log.FullName -Tail 60 -Wait } else { Write-Host 'No service log yet.' }
     }
     'update' {
         if (-not $Modules) { throw 'Use -Modules name1,name2 or -Modules all' }
+        Suspend-Health 'odoo-ctl update'
         Stop-Service 'odoo' -Force
         try {
             & $paths.VenvPython $paths.OdooBin -c $paths.OdooConf -d $settings.DbName -u $Modules --no-http --stop-after-init
             if ($LASTEXITCODE -ne 0) { throw ('Module update failed ({0})' -f $LASTEXITCODE) }
         }
-        finally { Start-Service 'odoo' }
+        finally { Start-Service 'odoo'; Resume-Health }
         Show-Status
     }
     'backup' { & (Join-Path $PSScriptRoot 'backup.ps1') -Root $Root }

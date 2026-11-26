@@ -10,10 +10,13 @@ $script:PgServiceName = 'OdooPostgreSQL'
 $script:OdooServiceName = 'odoo'
 $script:FirewallRuleName = 'OdooSetup-HTTP'
 $script:BackupTaskName = 'Odoo Daily Backup'
+$script:HealthTaskName = 'Odoo Health Check'
+$script:WuPolicyKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
 
 function Get-PgServiceName { return $script:PgServiceName }
 function Get-OdooServiceName { return $script:OdooServiceName }
 function Get-BackupTaskName { return $script:BackupTaskName }
+function Get-HealthTaskName { return $script:HealthTaskName }
 
 function Get-CachedFileName {
     param([Parameter(Mandatory)][string]$Url, [string]$Fallback = 'download.bin')
@@ -701,6 +704,7 @@ function Copy-OdooTools {
     $root = Split-Path $PSScriptRoot -Parent
     Copy-Item (Join-Path $root 'scripts\backup.ps1') $Paths.Tools -Force
     Copy-Item (Join-Path $root 'scripts\odoo-ctl.ps1') $Paths.Tools -Force
+    Copy-Item (Join-Path $root 'scripts\health-check.ps1') $Paths.Tools -Force
     Copy-Item (Join-Path $root 'lib\OdooSetup.Logic.psm1') $Paths.Tools -Force
 }
 
@@ -749,6 +753,74 @@ function Register-BackupTask {
 function Unregister-BackupTask {
     if (Get-ScheduledTask -TaskName $script:BackupTaskName -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName $script:BackupTaskName -Confirm:$false
+    }
+}
+
+# ---------------------------------------------------------- health check ---
+
+function Register-HealthCheckTask {
+    <# Every 5 minutes, as SYSTEM: restart Odoo if it stops answering (tools\health-check.ps1). #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][System.Collections.IDictionary]$Paths, [int]$IntervalMinutes = 5)
+    $script = Join-Path $Paths.Tools 'health-check.ps1'
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+        -Argument ('-NoProfile -ExecutionPolicy Bypass -NonInteractive -WindowStyle Hidden -File "{0}" -Root "{1}"' -f $script, $Paths.Root)
+    # No RepetitionDuration means "repeat forever"; it keeps repeating after reboots.
+    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes)
+    $system = (New-Object System.Security.Principal.SecurityIdentifier($SidSystem)).Translate([System.Security.Principal.NTAccount]).Value
+    $principal = New-ScheduledTaskPrincipal -UserId $system -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName $script:HealthTaskName -Action $action -Trigger $trigger -Principal $principal `
+        -Settings $settings -Description 'Restarts Odoo if it stops answering (Odoo-Setup-Scripts). Log: logs\health-check.log' -Force | Out-Null
+}
+
+function Unregister-HealthCheckTask {
+    if (Get-ScheduledTask -TaskName $script:HealthTaskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $script:HealthTaskName -Confirm:$false
+    }
+}
+
+function Get-HealthPauseFile { param([Parameter(Mandatory)][System.Collections.IDictionary]$Paths) return (Join-Path $Paths.Logs 'health-check.pause') }
+
+function Suspend-HealthCheck {
+    <#
+      Tells the health check to leave Odoo alone (setup, restore, updates, "odoo-ctl stop").
+      The pause expires by itself after 6 hours so a crashed run cannot disable it forever.
+    #>
+    param([Parameter(Mandatory)][System.Collections.IDictionary]$Paths, [string]$Reason = 'maintenance')
+    New-Item -ItemType Directory -Path $Paths.Logs -Force | Out-Null
+    Set-Content -Path (Get-HealthPauseFile $Paths) -Value $Reason -Encoding ASCII
+}
+
+function Resume-HealthCheck {
+    param([Parameter(Mandatory)][System.Collections.IDictionary]$Paths)
+    Remove-Item (Get-HealthPauseFile $Paths) -Force -ErrorAction SilentlyContinue
+}
+
+# ------------------------------------------------------- windows update ---
+
+function Set-WindowsUpdateActiveHours {
+    <#
+      Windows does not restart for updates between Start and End (the business day).
+      Uses the documented policy values, which also turn off "adjust automatically".
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$Start, [Parameter(Mandatory)][int]$End)
+    if (-not (Test-ActiveHours -Start $Start -End $End)) { throw ('Active hours {0}-{1} are not valid (0-23, at most 18 hours).' -f $Start, $End) }
+    New-Item -Path $script:WuPolicyKey -Force | Out-Null
+    foreach ($pair in @(@('SetActiveHours', 1), @('ActiveHoursStart', $Start), @('ActiveHoursEnd', $End), @('OdooSetupScripts', 1))) {
+        New-ItemProperty -Path $script:WuPolicyKey -Name $pair[0] -Value $pair[1] -PropertyType DWord -Force | Out-Null
+    }
+}
+
+function Remove-WindowsUpdateActiveHours {
+    <# Removes the active hours only if this installer set them (marker value present). #>
+    if (-not (Test-Path $script:WuPolicyKey)) { return }
+    $p = Get-ItemProperty -Path $script:WuPolicyKey -ErrorAction SilentlyContinue
+    if (-not $p -or -not ($p.PSObject.Properties.Name -contains 'OdooSetupScripts')) { return }
+    foreach ($n in @('SetActiveHours', 'ActiveHoursStart', 'ActiveHoursEnd', 'OdooSetupScripts')) {
+        Remove-ItemProperty -Path $script:WuPolicyKey -Name $n -ErrorAction SilentlyContinue
     }
 }
 
