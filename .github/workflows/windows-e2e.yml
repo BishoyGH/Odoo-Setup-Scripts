@@ -1,6 +1,6 @@
 name: Windows end-to-end
 
-# Full real install on a Windows runner (about 25-40 minutes, Windows minutes
+# Full real install on a Windows runner (about 20 minutes, Windows minutes
 # cost 2x). Manual only, so it never burns minutes by accident.
 on:
   workflow_dispatch:
