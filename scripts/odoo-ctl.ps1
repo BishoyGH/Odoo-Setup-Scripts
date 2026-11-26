@@ -53,7 +53,7 @@ switch ($Command) {
     'stop' { Stop-Service 'odoo' -Force; Show-Status }
     'restart' { Restart-Service 'odoo' -Force; Show-Status }
     'logs' {
-        $log = Get-ChildItem $paths.Logs -Filter 'odoo-service*.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        $log = Get-ChildItem $paths.Logs -Filter 'odoo-service.err*.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
         if ($log) { Get-Content $log.FullName -Tail 60 -Wait } else { Write-Host 'No service log yet.' }
     }
     'update' {

@@ -97,10 +97,7 @@ function Invoke-OdooRestore {
         Write-Info 'Stopping Odoo...'
         Stop-ServiceSafe -Name $odooSvc
         if ($exists) {
-            Invoke-Psql -Paths $Paths -Port $Settings.PgPort -User 'postgres' -Password $Secrets.PgSuperPassword `
-                -Sql ("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='{0}'" -f $TargetDb) | Out-Null
-            Invoke-Psql -Paths $Paths -Port $Settings.PgPort -User 'postgres' -Password $Secrets.PgSuperPassword `
-                -Sql ('DROP DATABASE "{0}"' -f $TargetDb) | Out-Null
+            Remove-OdooDatabase -Paths $Paths -Port $Settings.PgPort -SuperPassword $Secrets.PgSuperPassword -DbName $TargetDb
         }
         Invoke-Psql -Paths $Paths -Port $Settings.PgPort -User 'odoo' -Password $Secrets.OdooDbPassword `
             -Sql ("CREATE DATABASE `"{0}`" OWNER odoo ENCODING 'UTF8' TEMPLATE template0 LC_COLLATE 'C' LC_CTYPE 'C'" -f $TargetDb) | Out-Null
@@ -108,11 +105,16 @@ function Invoke-OdooRestore {
         Write-Info 'Loading database (this can take a while)...'
         $env:PGPASSWORD = $Secrets.OdooDbPassword
         try {
+            # Same as Odoo's own restore: no ON_ERROR_STOP, because harmless statements such as
+            # COMMENT ON EXTENSION fail for a non-superuser. Success is checked below instead.
             Invoke-Native -FilePath (Join-Path $Paths.PgBin 'psql.exe') -ArgumentList @(
-                '-h', '127.0.0.1', '-p', $Settings.PgPort, '-U', 'odoo', '-d', $TargetDb, '-q', '-v', 'ON_ERROR_STOP=1', '-f', ('"{0}"' -f $dump)
+                '-h', '127.0.0.1', '-p', $Settings.PgPort, '-U', 'odoo', '-d', $TargetDb, '-q', '-f', ('"{0}"' -f $dump)
             ) -LogFile (Join-Path $Paths.Logs 'restore-psql.log') | Out-Null
         }
         finally { $env:PGPASSWORD = $null }
+        $base = Invoke-Psql -Paths $Paths -Port $Settings.PgPort -User 'odoo' -Password $Secrets.OdooDbPassword -Database $TargetDb `
+            -Sql "SELECT state FROM ir_module_module WHERE name = 'base'"
+        if ($base -ne 'installed') { throw ('The restored database looks incomplete. See {0}' -f (Join-Path $Paths.Logs 'restore-psql.log.err')) }
 
         $fsTarget = Join-Path $Paths.Data ('filestore\' + $TargetDb)
         $fsSource = Join-Path $tmp 'filestore'

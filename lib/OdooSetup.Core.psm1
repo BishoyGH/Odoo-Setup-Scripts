@@ -281,11 +281,28 @@ function Write-Utf8NoBom {
 # ---------------------------------------------------------- permissions ----
 
 function Grant-FolderAccess {
-    <# Grants a SID inheritable rights on a folder (M = modify, RX = read). #>
+    <#
+      Grants a SID inheritable rights on a folder (M = modify, F = full, RX = read).
+      icacls propagates the inheritable entry to existing children, so no /T
+      (which would stamp an explicit entry on every file of a large filestore).
+    #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Sid, [string]$Rights = 'M')
     if (-not (Test-Path $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
-    & icacls.exe $Path /grant ('*{0}:(OI)(CI){1}' -f $Sid, $Rights) /T /C /Q | Out-Null
+    & icacls.exe $Path /grant ('*{0}:(OI)(CI){1}' -f $Sid, $Rights) /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw ('icacls could not grant access on {0}' -f $Path) }
+}
+
+function Grant-FileRead {
+    <# Grants a SID read access to a single file. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Sid)
+    & icacls.exe $Path /grant ('*{0}:R' -f $Sid) /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw ('icacls could not grant read access on {0}' -f $Path) }
+}
+
+function Get-CurrentUserSid {
+    return [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 }
 
 function Protect-Folder {
@@ -293,9 +310,11 @@ function Protect-Folder {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path, [string[]]$ReadSids = @())
     if (-not (Test-Path $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
-    $grants = @('/grant:r', ('*{0}:(OI)(CI)F' -f $script:SidAdministrators), '/grant:r', ('*{0}:(OI)(CI)F' -f $script:SidSystem))
-    foreach ($sid in $ReadSids) { $grants += @('/grant:r', ('*{0}:(OI)(CI)RX' -f $sid)) }
-    & icacls.exe $Path /inheritance:r @grants /T /C /Q | Out-Null
+    $grants = @('/grant:r', ('*{0}:(OI)(CI)F' -f $script:SidAdministrators), ('*{0}:(OI)(CI)F' -f $script:SidSystem))
+    foreach ($sid in $ReadSids) { $grants += ('*{0}:(OI)(CI)RX' -f $sid) }
+    # Children re-inherit from the new folder ACL; explicit per-file grants are kept.
+    & icacls.exe $Path /inheritance:r @grants /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw ('icacls could not protect {0}' -f $Path) }
 }
 
 # --------------------------------------------------------------- system ----

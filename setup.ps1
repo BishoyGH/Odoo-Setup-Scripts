@@ -219,7 +219,7 @@ function Invoke-Install {
         Save-Settings -Paths $P -S $S
         $sel = Resolve-AddonSelection -Catalog $script:Catalog -AppKeys $S.Apps -BundleKeys $S.OcaBundles
         $isProd = ($S.Mode -eq 'prod')
-        $total = 17
+        $total = 18
         Initialize-StepCounter -Total $total
         Write-Section $(if ($Repair) { 'Repairing' } else { 'Installing' })
 
@@ -240,13 +240,20 @@ function Invoke-Install {
             Write-OdooConfig -Paths $P -Settings $S -Secrets $X
             Write-CredentialsFile -Paths $P -Settings $S -Secrets $X
         }
-        $dbTest = { Test-DatabaseExists -Paths $P -Port $S.PgPort -Password $X.OdooDbPassword -DbName $S.DbName }
-        Invoke-SetupStep -Id 'database' -Title ('Database "{0}" (Egypt, EGP, Arabic)' -f $S.DbName) -Test $dbTest -Run {
+        $dbTest = { (Get-OdooDatabaseState -Paths $P -Port $S.PgPort -Password $X.OdooDbPassword -DbName $S.DbName) -eq 'ready' }
+        Invoke-SetupStep -Id 'database' -Title ('Database "{0}" with Arabic' -f $S.DbName) -Test $dbTest -Run {
             Stop-ServiceSafe -Name (Get-OdooServiceName)
+            if ((Get-OdooDatabaseState -Paths $P -Port $S.PgPort -Password $X.OdooDbPassword -DbName $S.DbName) -eq 'partial') {
+                Write-Warn 'Removing a half-created database from an interrupted run...'
+                Remove-OdooDatabase -Paths $P -Port $S.PgPort -SuperPassword $X.PgSuperPassword -DbName $S.DbName
+                Clear-StepDone 'company'; Clear-StepDone 'modules'
+            }
             New-OdooDatabase -Paths $P -Settings $S
-            Set-OdooCompanyDefaults -Paths $P -Settings $S -Secrets $X
         }
         $state = Get-SetupState
+        Invoke-SetupStep -Id 'company' -Title 'Company: Egypt, EGP, Africa/Cairo, administrator' -Test { $state.ContainsKey('company') } -Run {
+            Set-OdooCompanyDefaults -Paths $P -Settings $S -Secrets $X
+        }
         Invoke-SetupStep -Id 'modules' -Title 'Apps and community add-ons' -Test { (-not $Repair) -and $state.ContainsKey('modules') } -Run {
             Stop-ServiceSafe -Name (Get-OdooServiceName)
             Install-OdooModules -Paths $P -Settings $S -Modules $sel.Modules

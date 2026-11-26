@@ -63,3 +63,55 @@ Progress tracker for the plan in [docs/PLAN.md](docs/PLAN.md).
 - [ ] Run the manual "Windows end-to-end" workflow for 19.0 (Actions tab) and fix anything it finds
 - [ ] Try an interactive install on a 4 GB Windows 10 PC
 - [ ] Pin sha256 for the Python and PostgreSQL downloads after first verified run
+
+## Phase 8: Bug fixes from code review
+- [x] Service account can no longer read secrets.json / CREDENTIALS.txt
+- [x] Detect and rebuild a half-created database after an interrupted run
+- [x] Company setup as its own resumable step
+- [x] Load the Egyptian chart of accounts explicitly after apps install
+- [x] Restore works as a non-superuser and verifies the result
+- [x] initdb restricted-token access to pgdata
+- [x] icacls usage (single /grant:r, no per-file /T)
+- [x] Native stderr cannot abort psql/python checks
+- [x] Remove invalid `-w` from `pg_ctl register`
+- [x] `odoo-ctl logs` follows the error log
+
+> Phase 9 in docs/PLAN.md is the Windows verification in Phase 7 above. Do it first.
+
+## Phase 10: Logic updates
+- [ ] "Update Odoo" action: backup, refresh source, `-u all`, roll back on failure
+- [ ] Second backup copy (USB or network share)
+- [ ] Weekly automatic test-restore of the latest backup
+- [ ] Free-space check before backup
+- [ ] Status warns when the last good backup is older than 2 days
+- [ ] Windows notification on backup failure
+- [ ] "Restore as test copy" with `odoo-bin neutralize`
+- [ ] Development: optional auto-start, Start/Stop shortcuts, module scaffold
+- [ ] Enable Windows long paths before extracting sources
+- [ ] Detect pending reboot after VC++ runtime install
+
+## Phase 10b: Client-ready deployment (from "does the client need to run anything?")
+- [x] Production service starts at boot without delay (was "delayed start", about 2 minutes later)
+- [ ] Measure boot-to-login-page time on a 4 GB HDD and an 8 GB SSD PC, document it
+- [ ] Set Windows Update active hours to business hours so updates never reboot mid-day
+- [ ] Optional reseller package: one ZIP + answers file, runs with no questions
+- [ ] Health check task: if Odoo stops answering, restart the service and log it
+
+## Phase 11: Egyptian market depth
+- [ ] Bilingual (Arabic/English) installer prompts
+- [ ] Arabic PDF fonts for invoices
+- [ ] Verify VAT 14% and withholding tax defaults after `l10n_eg`
+- [ ] ETA setup guide and USB token middleware check
+- [ ] Egyptian payroll rules module on top of OCA payroll
+
+## Phase 12: Refactoring
+- [ ] Single install context object
+- [ ] Steps as a data table with one runner loop
+- [ ] Split `OdooSetup.Steps.psm1` into focused modules with explicit exports
+- [ ] Validate answers files (`Test-SetupSettings`)
+- [ ] Wrap native calls so install steps can be unit-tested with mocks
+
+## Phase 13: CI and releases
+- [ ] Pester mock tests for install steps (Linux runner)
+- [ ] Tag-only release workflow publishing a zip; bootstrap uses releases
+- [ ] Dependabot for GitHub Actions (monthly)
