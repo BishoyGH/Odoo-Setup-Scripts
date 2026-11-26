@@ -105,6 +105,7 @@ function Install-VCRedist {
 function Test-Python {
     param([Parameter(Mandatory)][System.Collections.IDictionary]$Paths, [Parameter(Mandatory)][string]$Version)
     if (-not (Test-Path $Paths.PythonExe)) { return $false }
+    $ErrorActionPreference = 'Continue'
     $v = (& $Paths.PythonExe -c 'import platform; print(platform.python_version())' 2>$null)
     return ($v -eq $Version)
 }
@@ -151,6 +152,8 @@ function Initialize-PgCluster {
     }
     New-Item -ItemType Directory -Path $Paths.PgData -Force | Out-Null
     Grant-FolderAccess -Path $Paths.PgData -Sid $SidNetworkService -Rights 'F'
+    # initdb drops Administrator rights (restricted token), so the user needs explicit access too.
+    Grant-FolderAccess -Path $Paths.PgData -Sid (Get-CurrentUserSid) -Rights 'F'
     $pwFile = Join-Path $env:TEMP ('pg-{0}.tmp' -f [guid]::NewGuid())
     Write-Utf8NoBom -Path $pwFile -Content $SuperPassword
     try {
@@ -186,7 +189,7 @@ function Install-PgService {
     if (-not $svc) {
         Invoke-Native -FilePath (Join-Path $Paths.PgBin 'pg_ctl.exe') -ArgumentList @(
             'register', '-N', $script:PgServiceName, '-U', ('"{0}"' -f (Get-NetworkServiceAccountName)),
-            '-D', ('"{0}"' -f $Paths.PgData), '-S', 'auto', '-w'
+            '-D', ('"{0}"' -f $Paths.PgData), '-S', 'auto'
         ) | Out-Null
         & sc.exe description $script:PgServiceName 'PostgreSQL database for Odoo (Odoo-Setup-Scripts)' | Out-Null
         & sc.exe failure $script:PgServiceName reset= 3600 actions= restart/10000/restart/30000/restart/60000 | Out-Null
@@ -229,6 +232,7 @@ function Invoke-Psql {
     )
     $old = $env:PGPASSWORD
     $env:PGPASSWORD = $Password
+    $ErrorActionPreference = 'Continue'   # psql notices on stderr must not throw
     try {
         $out = & (Join-Path $Paths.PgBin 'psql.exe') -h 127.0.0.1 -p $Port -U $User -d $Database -v ON_ERROR_STOP=1 -tAc $Sql 2>&1
         if ($LASTEXITCODE -ne 0) { throw ('psql failed: {0}' -f ($out -join ' ')) }
@@ -251,6 +255,28 @@ function Set-PgOdooRole {
            "ELSE ALTER ROLE odoo LOGIN CREATEDB PASSWORD '$OdooPassword'; END IF; END`$`$;"
     Invoke-Psql -Paths $Paths -Port $Port -User 'postgres' -Password $SuperPassword -Sql $sql | Out-Null
     Write-Ok 'Database role "odoo" ready (no superuser rights).'
+}
+
+function Get-OdooDatabaseState {
+    <# Returns 'missing', 'partial' (created but base not installed) or 'ready'. #>
+    param($Paths, [int]$Port, [string]$Password, [string]$DbName)
+    if (-not (Test-DatabaseExists -Paths $Paths -Port $Port -Password $Password -DbName $DbName)) { return 'missing' }
+    try {
+        $r = Invoke-Psql -Paths $Paths -Port $Port -User 'odoo' -Password $Password -Database $DbName `
+            -Sql "SELECT state FROM ir_module_module WHERE name = 'base'"
+        if ($r -eq 'installed') { return 'ready' }
+    }
+    catch { Write-Verbose $_ }
+    return 'partial'
+}
+
+function Remove-OdooDatabase {
+    param($Paths, [int]$Port, [string]$SuperPassword, [string]$DbName)
+    Invoke-Psql -Paths $Paths -Port $Port -User 'postgres' -Password $SuperPassword `
+        -Sql ("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='{0}'" -f $DbName) | Out-Null
+    Invoke-Psql -Paths $Paths -Port $Port -User 'postgres' -Password $SuperPassword -Sql ('DROP DATABASE IF EXISTS "{0}"' -f $DbName) | Out-Null
+    $fs = Join-Path $Paths.Data ('filestore\' + $DbName)
+    if (Test-Path $fs) { Remove-Item $fs -Recurse -Force }
 }
 
 function Test-DatabaseExists {
@@ -436,7 +462,9 @@ function Write-OdooConfig {
     # Service account: write data + logs, read config. Config folder holds secrets.
     Grant-FolderAccess -Path $Paths.Data -Sid $SidNetworkService -Rights 'M'
     Grant-FolderAccess -Path $Paths.Logs -Sid $SidNetworkService -Rights 'M'
-    Protect-Folder -Path $Paths.Conf -ReadSids @($SidNetworkService)
+    # conf\ holds secrets.json and CREDENTIALS.txt: admins only. The service may read odoo.conf alone.
+    Protect-Folder -Path $Paths.Conf
+    Grant-FileRead -Path $Paths.OdooConf -Sid $SidNetworkService
     Write-Ok ('Wrote {0}' -f $Paths.OdooConf)
 }
 
@@ -472,20 +500,31 @@ function Set-OdooCompanyDefaults {
         [Parameter(Mandatory)][System.Collections.IDictionary]$Settings,
         [Parameter(Mandatory)][System.Collections.IDictionary]$Secrets
     )
-    $script = Join-Path $Paths.Tools 'company_setup.py'
-    Copy-Item (Join-Path $PSScriptRoot '..\scripts\company_setup.py') $script -Force
-    $vars = @{
+    Invoke-OdooShellScript -Paths $Paths -DbName $Settings.DbName -ScriptName 'company_setup.py' -Environment @{
         OSS_COMPANY_NAME = $Settings.CompanyName; OSS_ADMIN_LOGIN = $Settings.AdminLogin
         OSS_ADMIN_PASSWORD = $Secrets.AdminPassword; OSS_LANG = $Settings.UiLanguage; OSS_TZ = 'Africa/Cairo'
     }
-    foreach ($k in $vars.Keys) { Set-Item -Path ('env:' + $k) -Value ([string]$vars[$k]) }
+}
+
+function Invoke-OdooShellScript {
+    <# Runs a Python file from scripts\ inside "odoo-bin shell" and checks it printed its OK marker. #>
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Paths,
+        [Parameter(Mandatory)][string]$DbName,
+        [Parameter(Mandatory)][string]$ScriptName,
+        [hashtable]$Environment = @{}
+    )
+    $scriptFile = Join-Path $Paths.Tools $ScriptName
+    Copy-Item (Join-Path $PSScriptRoot ('..\scripts\' + $ScriptName)) $scriptFile -Force
+    $logName = 'odoo-' + [IO.Path]::GetFileNameWithoutExtension($ScriptName)
+    foreach ($k in $Environment.Keys) { Set-Item -Path ('env:' + $k) -Value ([string]$Environment[$k]) }
     try {
-        Invoke-OdooBin -Paths $Paths -OdooArgs @('shell', '-c', ('"{0}"' -f $Paths.OdooConf), '-d', $Settings.DbName, '--no-http') `
-            -LogName 'odoo-company-setup' -StdinFile $script
+        Invoke-OdooBin -Paths $Paths -OdooArgs @('shell', '-c', ('"{0}"' -f $Paths.OdooConf), '-d', $DbName, '--no-http') `
+            -LogName $logName -StdinFile $scriptFile
     }
-    finally { foreach ($k in $vars.Keys) { Remove-Item -Path ('env:' + $k) -ErrorAction SilentlyContinue } }
-    $log = Join-Path $Paths.Logs 'odoo-company-setup.log'
-    if (-not (Select-String -Path $log -Pattern 'OSS_SETUP_OK' -Quiet)) { throw ('Company setup did not finish. See {0}' -f $log) }
+    finally { foreach ($k in $Environment.Keys) { Remove-Item -Path ('env:' + $k) -ErrorAction SilentlyContinue } }
+    $log = Join-Path $Paths.Logs ($logName + '.log')
+    if (-not (Select-String -Path $log -Pattern 'OSS_SETUP_OK' -Quiet)) { throw ('{0} did not finish. See {1}' -f $ScriptName, $log) }
 }
 
 function Install-OdooModules {
@@ -504,6 +543,10 @@ function Install-OdooModules {
     $odooArgs = @('-c', ('"{0}"' -f $Paths.OdooConf), '-d', $Settings.DbName, '-i', ($split.Present -join ','), '--no-http', '--stop-after-init')
     $odooArgs += Get-DemoArguments -Version $Settings.OdooVersion -WithDemo ([bool]$Settings.WithDemo)
     Invoke-OdooBin -Paths $Paths -OdooArgs $odooArgs -LogName 'odoo-install-modules'
+    if ($split.Present -contains 'account') {
+        # Make sure the Egyptian chart of accounts is loaded even if auto-detection did not run.
+        Invoke-OdooShellScript -Paths $Paths -DbName $Settings.DbName -ScriptName 'post_install.py'
+    }
 }
 
 # --------------------------------------------------------------- service ---
@@ -690,9 +733,9 @@ Odoo DB role ........ odoo / $($Secrets.OdooDbPassword)
 function Register-BackupTask {
     [CmdletBinding()]
     param([Parameter(Mandatory)][System.Collections.IDictionary]$Paths, [Parameter(Mandatory)][string]$Time)
-    $script = Join-Path $Paths.Tools 'backup.ps1'
+    $backupScript = Join-Path $Paths.Tools 'backup.ps1'
     $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-        -Argument ('-NoProfile -ExecutionPolicy Bypass -NonInteractive -File "{0}" -Root "{1}"' -f $script, $Paths.Root)
+        -Argument ('-NoProfile -ExecutionPolicy Bypass -NonInteractive -File "{0}" -Root "{1}"' -f $backupScript, $Paths.Root)
     $trigger = New-ScheduledTaskTrigger -Daily -At ([datetime]::ParseExact($Time, 'HH:mm', $null))
     $system = (New-Object System.Security.Principal.SecurityIdentifier($SidSystem)).Translate([System.Security.Principal.NTAccount]).Value
     $principal = New-ScheduledTaskPrincipal -UserId $system -LogonType ServiceAccount -RunLevel Highest
