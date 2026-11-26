@@ -79,7 +79,7 @@ Progress tracker for the plan in [docs/PLAN.md](docs/PLAN.md).
 > Phase 9 in docs/PLAN.md is the Windows verification in Phase 7 above. Do it first.
 
 ## Phase 10: Logic updates
-- [ ] "Update Odoo" action: backup, refresh source, `-u all`, roll back on failure
+- [x] "Update Odoo" action: backup, refresh source, `-u all`, roll back on failure
 - [ ] Second backup copy (USB or network share)
 - [ ] Weekly automatic test-restore of the latest backup
 - [ ] Free-space check before backup

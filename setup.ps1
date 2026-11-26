@@ -7,7 +7,7 @@
   Double-click install.cmd, or run from an elevated PowerShell:
     powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
-  Actions: Install (default menu), Repair, Backup, Restore, Status, Uninstall.
+  Actions: Install (default menu), Update, Repair, Backup, Restore, Status, Uninstall.
   Unattended: .\setup.ps1 -Action Install -ConfigFile .\config\answers.example.psd1
 
 .PARAMETER Action
@@ -17,11 +17,11 @@
   A .psd1 answers file (see config\answers.example.psd1). Implies no prompts.
 
 .PARAMETER Root
-  Installation folder for Repair/Backup/Restore/Status/Uninstall when it is not C:\Odoo.
+  Installation folder for Update/Repair/Backup/Restore/Status/Uninstall when it is not C:\Odoo.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Menu', 'Install', 'Repair', 'Backup', 'Restore', 'Status', 'Uninstall')]
+    [ValidateSet('Menu', 'Install', 'Update', 'Repair', 'Backup', 'Restore', 'Status', 'Uninstall')]
     [string]$Action = 'Menu',
     [string]$ConfigFile = '',
     [string]$Root = 'C:\Odoo'
@@ -34,6 +34,7 @@ $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $script:InstallRoot = $Root
 Import-Module (Join-Path $here 'lib\OdooSetup.Maintenance.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $here 'lib\OdooSetup.Update.psm1') -Force -DisableNameChecking
 
 $script:Components = Import-PowerShellDataFile (Join-Path $here 'config\components.psd1')
 $script:Catalog = Import-PowerShellDataFile (Join-Path $here 'config\addons.psd1')
@@ -350,6 +351,10 @@ function Invoke-Action {
             if (-not $script:Unattended -and -not (Read-YesNo -Prompt 'Start the installation?' -Default $true)) { return }
             Invoke-Install -S $s
         }
+        'Update' {
+            $ctx = Get-InstalledContext $script:InstallRoot
+            Invoke-OdooUpdate -Paths $ctx.P -Settings $ctx.S -Secrets $ctx.X -Components $script:Components -NoPrompt:($Action -ne 'Menu')
+        }
         'Repair' {
             $ctx = Get-InstalledContext $script:InstallRoot
             $s = Get-DefaultSettings; Merge-Settings -Base $s -Override $ctx.S
@@ -389,9 +394,10 @@ if ($Action -ne 'Menu') {
 
 while ($true) {
     $choice = Read-Choice -Prompt 'What would you like to do?' -Options @(
-        'Install Odoo', 'Status', 'Back up now', 'Restore from a backup', 'Repair installation', 'Uninstall', 'Exit'
+        'Install Odoo', 'Status', 'Update Odoo (bug fixes, with backup and rollback)', 'Back up now', 'Restore from a backup',
+        'Repair installation', 'Uninstall', 'Exit'
     ) -DefaultIndex 0
-    $name = @('Install', 'Status', 'Backup', 'Restore', 'Repair', 'Uninstall', 'Exit')[$choice]
+    $name = @('Install', 'Status', 'Update', 'Backup', 'Restore', 'Repair', 'Uninstall', 'Exit')[$choice]
     if ($name -eq 'Exit') { break }
     try { Invoke-Action $name } catch { Write-Fail $_.Exception.Message }
     Wait-AnyKey
