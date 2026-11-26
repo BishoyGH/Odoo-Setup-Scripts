@@ -148,7 +148,8 @@ function Invoke-OdooUninstall {
     $exe = Join-Path $Paths.Tools 'odoo-service.exe'
     if (Get-Service -Name (Get-OdooServiceName) -ErrorAction SilentlyContinue) {
         Stop-ServiceSafe -Name (Get-OdooServiceName)
-        if (Test-Path $exe) { & $exe uninstall | Out-Null } else { & sc.exe delete (Get-OdooServiceName) | Out-Null }
+        if (Test-Path $exe) { Invoke-Tool -FilePath $exe -ArgumentList @('uninstall') | Out-Null }
+        else { Invoke-Tool -FilePath 'sc.exe' -ArgumentList @('delete', (Get-OdooServiceName)) | Out-Null }
         Write-Ok 'Odoo service removed'
     }
     if (Get-Service -Name (Get-PgServiceName) -ErrorAction SilentlyContinue) {

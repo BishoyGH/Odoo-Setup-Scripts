@@ -227,6 +227,21 @@ function Invoke-Native {
     return $code
 }
 
+function Invoke-Tool {
+    <#
+      Runs a short native command (sc.exe, icacls.exe, psql.exe, powercfg.exe ...)
+      and returns @{ ExitCode; Output }. Output is stdout and stderr as strings.
+      It never throws on a non-zero exit code: the caller decides.
+      Every direct "& tool.exe" call goes through here so unit tests can mock it.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$FilePath, [string[]]$ArgumentList = @())
+    if (-not (Get-Command $FilePath -ErrorAction SilentlyContinue)) { throw ('{0} was not found.' -f $FilePath) }
+    $ErrorActionPreference = 'Continue'   # stderr from native tools must not throw
+    $out = @(& $FilePath @ArgumentList 2>&1 | ForEach-Object { [string]$_ })
+    return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $out }
+}
+
 # -------------------------------------------------------------- secrets ----
 
 function New-RandomPassword {
@@ -289,16 +304,16 @@ function Grant-FolderAccess {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Sid, [string]$Rights = 'M')
     if (-not (Test-Path $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
-    & icacls.exe $Path /grant ('*{0}:(OI)(CI){1}' -f $Sid, $Rights) /C /Q | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw ('icacls could not grant access on {0}' -f $Path) }
+    $r = Invoke-Tool -FilePath 'icacls.exe' -ArgumentList @($Path, '/grant', ('*{0}:(OI)(CI){1}' -f $Sid, $Rights), '/C', '/Q')
+    if ($r.ExitCode -ne 0) { throw ('icacls could not grant access on {0}' -f $Path) }
 }
 
 function Grant-FileRead {
     <# Grants a SID read access to a single file. #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Sid)
-    & icacls.exe $Path /grant ('*{0}:R' -f $Sid) /C /Q | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw ('icacls could not grant read access on {0}' -f $Path) }
+    $r = Invoke-Tool -FilePath 'icacls.exe' -ArgumentList @($Path, '/grant', ('*{0}:R' -f $Sid), '/C', '/Q')
+    if ($r.ExitCode -ne 0) { throw ('icacls could not grant read access on {0}' -f $Path) }
 }
 
 function Get-CurrentUserSid {
@@ -313,8 +328,8 @@ function Protect-Folder {
     $grants = @('/grant:r', ('*{0}:(OI)(CI)F' -f $script:SidAdministrators), ('*{0}:(OI)(CI)F' -f $script:SidSystem))
     foreach ($sid in $ReadSids) { $grants += ('*{0}:(OI)(CI)RX' -f $sid) }
     # Children re-inherit from the new folder ACL; explicit per-file grants are kept.
-    & icacls.exe $Path /inheritance:r @grants /C /Q | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw ('icacls could not protect {0}' -f $Path) }
+    $r = Invoke-Tool -FilePath 'icacls.exe' -ArgumentList (@($Path, '/inheritance:r') + $grants + @('/C', '/Q'))
+    if ($r.ExitCode -ne 0) { throw ('icacls could not protect {0}' -f $Path) }
 }
 
 # --------------------------------------------------------------- system ----

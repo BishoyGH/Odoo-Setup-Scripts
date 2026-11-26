@@ -163,3 +163,8 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Action Install -ConfigFile
   (`windows-e2e.yml`) is available as a manual workflow.
 
 Run the tests locally with `Invoke-Pester ./tests` and `./tests/Invoke-Lint.ps1`.
+
+`tests/Steps.Tests.ps1` unit-tests the Windows install steps on Linux with mocks.
+To keep a step testable, run executables through `Invoke-Native` (long installs,
+logged) or `Invoke-Tool` (short commands like `sc.exe`, `icacls.exe`, `psql.exe`),
+never with a bare `& tool.exe`, so a test can mock the call.
