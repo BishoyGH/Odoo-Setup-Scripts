@@ -16,6 +16,11 @@ company = env.ref("base.main_company")
 vals = {"country_id": egypt.id, "currency_id": egp.id}
 if get("OSS_COMPANY_NAME"):
     vals["name"] = get("OSS_COMPANY_NAME")
+# Arabic companies print with Tajawal, Odoo's bundled report font that covers Arabic and Latin
+# (Odoo 16+). The default Lato has no Arabic letters, so invoices fall back to a system font.
+font_field = company._fields.get("font")
+if lang.startswith("ar") and font_field and "Tajawal" in dict(font_field.selection):
+    vals["font"] = "Tajawal"
 company.write(vals)
 company.partner_id.write({"tz": tz, "lang": lang, "country_id": egypt.id})
 

@@ -98,11 +98,14 @@ Progress tracker for the plan in [docs/PLAN.md](docs/PLAN.md).
 - [ ] Health check task: if Odoo stops answering, restart the service and log it
 
 ## Phase 11: Egyptian market depth
-- [ ] Bilingual (Arabic/English) installer prompts
-- [ ] Arabic PDF fonts for invoices
+- [x] Bilingual (Arabic/English) installer prompts (`-Language ar|en`, `config/i18n/ar.json`)
+- [x] Arabic PDF fonts for invoices (Tajawal report font for Arabic companies, Noto Arabic fonts installed)
 - [ ] Verify VAT 14% and withholding tax defaults after `l10n_eg`
-- [ ] ETA setup guide and USB token middleware check
-- [ ] Egyptian payroll rules module on top of OCA payroll
+- [x] ETA setup guide and USB token middleware check (docs/ETA-EINVOICING.md, ePass2003 driver check)
+- [x] Egyptian payroll rules module on top of OCA payroll (`addons/l10n_eg_payroll_oss`, docs/EGYPT-PAYROLL.md)
+- [ ] Verify on Windows: Arabic prompts in Windows Terminal and the classic console, Arabic invoice PDF
+- [ ] Automate the ETA signing service (Odoo IoT driver) on the PC with the token
+- [ ] Have an Egyptian accountant confirm the payroll rates and the high-income bracket rule
 
 ## Phase 12: Refactoring
 - [ ] Single install context object

@@ -48,10 +48,11 @@
             Modules = @('account_asset_management')
         }
         @{
-            Key = 'payroll'; Name = 'Payroll (generic, configure Egyptian rules yourself)'
+            # l10n_eg_payroll_oss ships in this repository (addons\) and adds the Egyptian rules.
+            Key = 'payroll'; Name = 'Payroll with Egyptian rules: social insurance, salary tax, Martyrs Fund'
             Default = $false
             Repos = @('payroll')
-            Modules = @('payroll', 'payroll_account')
+            Modules = @('payroll', 'payroll_account', 'l10n_eg_payroll_oss')
         }
         @{
             Key = 'devribbon'; Name = 'Environment ribbon (shows DEV banner)'

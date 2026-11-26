@@ -1,0 +1,74 @@
+# Arabic translation of the Egyptian payroll rules.
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo-Setup-Scripts\n"
+"Language: ar\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: \n"
+"Plural-Forms: nplurals=6; plural=n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 && n%100<=10 ? 3 : n%100>=11 ? 4 : 5;\n"
+
+#. module: l10n_eg_payroll_oss
+#: model:hr.salary.rule.category,name:l10n_eg_payroll_oss.category_basic
+msgid "Basic"
+msgstr "أساسي"
+
+#. module: l10n_eg_payroll_oss
+#: model:hr.salary.rule.category,name:l10n_eg_payroll_oss.category_alw
+msgid "Allowance"
+msgstr "بدلات"
+
+#. module: l10n_eg_payroll_oss
+#: model:hr.salary.rule.category,name:l10n_eg_payroll_oss.category_gross
+msgid "Gross"
+msgstr "الإجمالي"
+
+#. module: l10n_eg_payroll_oss
+#: model:hr.salary.rule.category,name:l10n_eg_payroll_oss.category_ded
+msgid "Deduction"
+msgstr "استقطاعات"
+
+#. module: l10n_eg_payroll_oss
+#: model:hr.salary.rule.category,name:l10n_eg_payroll_oss.category_net
+msgid "Net"
+msgstr "الصافي"
+
+#. module: l10n_eg_payroll_oss
+#: model:hr.salary.rule.category,name:l10n_eg_payroll_oss.category_comp
+msgid "Company Contribution"
+msgstr "حصة الشركة"
+
+#. module: l10n_eg_payroll_oss
+#: model:hr.salary.rule,name:l10n_eg_payroll_oss.rule_basic
+msgid "Basic Salary"
+msgstr "الراتب الأساسي"
+
+#. module: l10n_eg_payroll_oss
+#: model:hr.salary.rule,name:l10n_eg_payroll_oss.rule_gross
+msgid "Gross Salary"
+msgstr "إجمالي الراتب"
+
+#. module: l10n_eg_payroll_oss
+#: model:hr.salary.rule,name:l10n_eg_payroll_oss.rule_si_employee
+msgid "Social Insurance (Employee 11%)"
+msgstr "التأمينات الاجتماعية (حصة العامل 11%)"
+
+#. module: l10n_eg_payroll_oss
+#: model:hr.salary.rule,name:l10n_eg_payroll_oss.rule_si_employer
+msgid "Social Insurance (Company 18.75%)"
+msgstr "التأمينات الاجتماعية (حصة الشركة 18.75%)"
+
+#. module: l10n_eg_payroll_oss
+#: model:hr.salary.rule,name:l10n_eg_payroll_oss.rule_martyrs_fund
+msgid "Martyrs Fund (0.05%)"
+msgstr "صندوق الشهداء (0.05%)"
+
+#. module: l10n_eg_payroll_oss
+#: model:hr.salary.rule,name:l10n_eg_payroll_oss.rule_salary_tax
+msgid "Salary Income Tax"
+msgstr "ضريبة كسب العمل"
+
+#. module: l10n_eg_payroll_oss
+#: model:hr.salary.rule,name:l10n_eg_payroll_oss.rule_net
+msgid "Net Salary"
+msgstr "صافي الراتب"

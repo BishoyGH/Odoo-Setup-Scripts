@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo noupdate="1">
+    <record id="structure_egypt_monthly" model="hr.payroll.structure">
+        <field name="code">EG</field>
+        <field name="name">Egypt - Monthly Employee</field>
+        <field name="note">Basic + allowances, social insurance, Martyrs Fund and salary income tax. Monthly pay only.</field>
+        <field
+            name="rule_ids"
+            eval="[(6, 0, [ref('rule_basic'), ref('rule_gross'), ref('rule_si_employee'), ref('rule_si_employer'), ref('rule_martyrs_fund'), ref('rule_salary_tax'), ref('rule_net')])]"
+        />
+    </record>
+</odoo>

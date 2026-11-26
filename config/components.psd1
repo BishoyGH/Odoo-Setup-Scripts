@@ -40,4 +40,17 @@
 
     OdooVersions   = @('18.0', '19.0', '20.0')
     DefaultVersion = '19.0'
+
+    # Arabic fonts installed for all users so PDF invoices render Arabic cleanly
+    # (Odoo's own Tajawal report font is selected for Arabic companies; these are the fallback).
+    # Pinned to a commit of the official Noto fonts site, SIL Open Font License.
+    ArabicFonts = @{
+        BaseUrl = 'https://raw.githubusercontent.com/notofonts/notofonts.github.io/d14cc173a70dc57962ed2d4ad278fc9df83bf9f3/fonts/'
+        Files   = @(
+            @{ Family = 'Noto Naskh Arabic'; Style = 'Regular'; Path = 'NotoNaskhArabic/hinted/ttf/NotoNaskhArabic-Regular.ttf'; Sha256 = '6f0a92031367b2f5a2078fe9d24f3433122b61a0bad57c423aad8f3c39aa2e6e' }
+            @{ Family = 'Noto Naskh Arabic'; Style = 'Bold';    Path = 'NotoNaskhArabic/hinted/ttf/NotoNaskhArabic-Bold.ttf';    Sha256 = '04017b0ccdd1156dcde3bc386734c1b03165261762f16a025c8afc9088ae76e9' }
+            @{ Family = 'Noto Kufi Arabic';  Style = 'Regular'; Path = 'NotoKufiArabic/hinted/ttf/NotoKufiArabic-Regular.ttf';   Sha256 = '76f539d38a44907365dbccc98466c9c607e74abbfd209add21a254a8ce8668da' }
+            @{ Family = 'Noto Kufi Arabic';  Style = 'Bold';    Path = 'NotoKufiArabic/hinted/ttf/NotoKufiArabic-Bold.ttf';      Sha256 = '1feda69b8b77a5efd9c55f03081f309c8776b08030296638c519d154d9971447' }
+        )
+    }
 }
