@@ -136,3 +136,58 @@ Also: `random_page_cost` 1.1 on SSD / 4 on HDD (auto-detected),
   per-company step (documented in README).
 * Odoo on Windows cannot use multi-process workers; for more than ~25
   concurrent users a Linux server is the better choice.
+
+## 8. Next steps (round 2)
+
+Ordered by value. Phase numbers match [TASKS.md](../TASKS.md).
+
+### Phase 8: Bug fixes from code review (done)
+Ten issues fixed, most important: the Odoo service account could read the
+PostgreSQL superuser password; an interrupted database creation was treated as
+finished; restores failed as a non-superuser; the Egyptian chart of accounts
+relied on auto-detection.
+
+### Phase 9: Prove it on real Windows (highest priority)
+Nothing replaces one real run. Run the manual Windows workflow for 19.0, then
+18.0 and 20.0, then one interactive install on a 4 GB Windows 10 PC. Pin the
+Python and PostgreSQL checksums once the downloads are confirmed.
+
+### Phase 10: Logic updates
+* **Safe updates**: a menu action "Update Odoo" that takes a backup, refreshes
+  the source (bug fixes on the same version), runs `-u all` and rolls back to
+  the backup if it fails. Major-version upgrades stay out of scope (they need
+  OpenUpgrade and a test run).
+* **Backups you can trust**: second copy to a USB drive or network share;
+  weekly test-restore into a throwaway database; free-space check before each
+  backup; Status warns when the last good backup is older than 2 days; a
+  Windows notification when a backup fails.
+* **Test copies**: "Restore as test copy" runs `odoo-bin neutralize` so a copy
+  never sends emails or runs payment/ETA jobs.
+* **Development comfort**: optional auto-start, Start/Stop desktop shortcuts,
+  scaffold a module into `addons\custom`.
+* **Windows hardening**: enable long paths before extracting sources; check
+  for pending reboots after the VC++ runtime install.
+
+### Phase 11: Egyptian market depth
+* Arabic installer prompts (bilingual), which needs UTF-8 BOM source files and a test.
+* Arabic PDF fonts (Cairo / Noto Kufi Arabic) so invoices print cleanly.
+* Check VAT 14% and withholding tax defaults after `l10n_eg` loads.
+* ETA setup guide plus a pre-flight check for the USB token middleware.
+* A small custom module with Egyptian payroll rules (social insurance, income
+  tax brackets) on top of OCA payroll.
+
+### Phase 12: Refactoring
+* One install context object instead of passing Paths/Settings/Secrets everywhere.
+* Steps declared as a data table (Id, Title, Test, Run) driven by one loop,
+  removing the reliance on PowerShell scriptblock scoping.
+* Split `OdooSetup.Steps.psm1` (about 700 lines) into Python, PostgreSQL,
+  Odoo, Service and OS modules, each with an explicit export list.
+* Validate answers files (`Test-SetupSettings`) with clear messages.
+* Thin wrappers around native calls (icacls, sc, psql) so the install steps
+  get Pester tests with mocks on the cheap Linux runner.
+
+### Phase 13: CI and releases
+* Pester mock tests for the install steps (still Linux only).
+* Release workflow on tags only: zip the scripts and attach to a GitHub release
+  (bootstrap can then download a pinned release instead of `main`).
+* Dependabot for GitHub Actions versions, monthly.
