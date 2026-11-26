@@ -105,9 +105,8 @@ function Install-VCRedist {
 function Test-Python {
     param([Parameter(Mandatory)][System.Collections.IDictionary]$Paths, [Parameter(Mandatory)][string]$Version)
     if (-not (Test-Path $Paths.PythonExe)) { return $false }
-    $ErrorActionPreference = 'Continue'
-    $v = (& $Paths.PythonExe -c 'import platform; print(platform.python_version())' 2>$null)
-    return ($v -eq $Version)
+    $r = Invoke-Tool -FilePath $Paths.PythonExe -ArgumentList @('-c', 'import platform; print(platform.python_version())')
+    return ($r.ExitCode -eq 0 -and @($r.Output)[0] -eq $Version)
 }
 
 function Install-Python {
@@ -191,8 +190,8 @@ function Install-PgService {
             'register', '-N', $script:PgServiceName, '-U', ('"{0}"' -f (Get-NetworkServiceAccountName)),
             '-D', ('"{0}"' -f $Paths.PgData), '-S', 'auto'
         ) | Out-Null
-        & sc.exe description $script:PgServiceName 'PostgreSQL database for Odoo (Odoo-Setup-Scripts)' | Out-Null
-        & sc.exe failure $script:PgServiceName reset= 3600 actions= restart/10000/restart/30000/restart/60000 | Out-Null
+        Invoke-Tool -FilePath 'sc.exe' -ArgumentList @('description', $script:PgServiceName, 'PostgreSQL database for Odoo (Odoo-Setup-Scripts)') | Out-Null
+        Invoke-Tool -FilePath 'sc.exe' -ArgumentList @('failure', $script:PgServiceName, 'reset=', '3600', 'actions=', 'restart/10000/restart/30000/restart/60000') | Out-Null
     }
     Start-ServiceSafe -Name $script:PgServiceName
     if (-not (Wait-TcpPort -Port $Port -TimeoutSeconds 60)) {
@@ -232,11 +231,12 @@ function Invoke-Psql {
     )
     $old = $env:PGPASSWORD
     $env:PGPASSWORD = $Password
-    $ErrorActionPreference = 'Continue'   # psql notices on stderr must not throw
     try {
-        $out = & (Join-Path $Paths.PgBin 'psql.exe') -h 127.0.0.1 -p $Port -U $User -d $Database -v ON_ERROR_STOP=1 -tAc $Sql 2>&1
-        if ($LASTEXITCODE -ne 0) { throw ('psql failed: {0}' -f ($out -join ' ')) }
-        return (($out | Out-String).Trim())
+        # Invoke-Tool keeps psql notices on stderr from throwing.
+        $r = Invoke-Tool -FilePath (Join-Path $Paths.PgBin 'psql.exe') -ArgumentList @(
+            '-h', '127.0.0.1', '-p', [string]$Port, '-U', $User, '-d', $Database, '-v', 'ON_ERROR_STOP=1', '-tAc', $Sql)
+        if ($r.ExitCode -ne 0) { throw ('psql failed: {0}' -f ($r.Output -join ' ')) }
+        return (($r.Output | Out-String).Trim())
     }
     finally { $env:PGPASSWORD = $old }
 }
@@ -534,7 +534,7 @@ function Install-OdooModules {
         [Parameter(Mandatory)][System.Collections.IDictionary]$Settings,
         [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Modules
     )
-    $available = Get-AvailableModules -AddonsPath (Get-AddonsPathList $Paths)
+    $available = @(Get-AvailableModules -AddonsPath (Get-AddonsPathList $Paths))
     $split = Split-ModulesByAvailability -Modules $Modules -AvailableModules $available
     foreach ($m in $split.Missing) { Write-Warn ('Module {0} is not available for Odoo {1}, skipped.' -f $m, $Settings.OdooVersion) }
     if ($split.Present.Count -eq 0) { Write-Skip 'No modules to install.'; return }
@@ -567,7 +567,8 @@ function Install-OdooService {
 
     if (Get-Service -Name $script:OdooServiceName -ErrorAction SilentlyContinue) {
         Stop-ServiceSafe -Name $script:OdooServiceName
-        if (Test-Path $exe) { & $exe uninstall | Out-Null } else { & sc.exe delete $script:OdooServiceName | Out-Null }
+        if (Test-Path $exe) { Invoke-Tool -FilePath $exe -ArgumentList @('uninstall') | Out-Null }
+        else { Invoke-Tool -FilePath 'sc.exe' -ArgumentList @('delete', $script:OdooServiceName) | Out-Null }
         Start-Sleep -Seconds 2
     }
     Copy-Item $winsw $exe -Force
@@ -607,8 +608,8 @@ function Install-OdooService {
 
     $startType = 'demand'
     if ($Settings.Mode -eq 'prod') { $startType = 'auto' }   # starts right after PostgreSQL, before anyone logs in
-    & sc.exe config $script:OdooServiceName start= $startType | Out-Null
-    & sc.exe config $script:OdooServiceName depend= $script:PgServiceName | Out-Null
+    Invoke-Tool -FilePath 'sc.exe' -ArgumentList @('config', $script:OdooServiceName, 'start=', $startType) | Out-Null
+    Invoke-Tool -FilePath 'sc.exe' -ArgumentList @('config', $script:OdooServiceName, 'depend=', $script:PgServiceName) | Out-Null
 
     Start-ServiceSafe -Name $script:OdooServiceName
     Write-Info 'Waiting for Odoo to answer...'
@@ -663,8 +664,8 @@ function Set-DefenderExclusions {
 }
 
 function Disable-SleepOnAC {
-    & powercfg.exe /change standby-timeout-ac 0 | Out-Null
-    & powercfg.exe /change hibernate-timeout-ac 0 | Out-Null
+    Invoke-Tool -FilePath 'powercfg.exe' -ArgumentList @('/change', 'standby-timeout-ac', '0') | Out-Null
+    Invoke-Tool -FilePath 'powercfg.exe' -ArgumentList @('/change', 'hibernate-timeout-ac', '0') | Out-Null
 }
 
 function New-OdooShortcut {

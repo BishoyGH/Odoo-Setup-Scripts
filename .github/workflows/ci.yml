@@ -70,7 +70,8 @@ jobs:
           Import-Module PSScriptAnalyzer -RequiredVersion $env:PSSA_VERSION
           ./tests/Invoke-Lint.ps1
 
-      - name: Unit tests (Pester)
+      # tests/Steps.Tests.ps1 covers the Windows install steps with mocks, so it runs here too.
+      - name: Unit tests (Pester, logic and mocked install steps)
         shell: pwsh
         run: |
           Import-Module Pester -RequiredVersion $env:PESTER_VERSION

@@ -109,9 +109,9 @@ Progress tracker for the plan in [docs/PLAN.md](docs/PLAN.md).
 - [ ] Steps as a data table with one runner loop
 - [ ] Split `OdooSetup.Steps.psm1` into focused modules with explicit exports
 - [ ] Validate answers files (`Test-SetupSettings`)
-- [ ] Wrap native calls so install steps can be unit-tested with mocks
+- [x] Wrap native calls so install steps can be unit-tested with mocks (`Invoke-Tool`)
 
 ## Phase 13: CI and releases
-- [ ] Pester mock tests for install steps (Linux runner)
+- [x] Pester mock tests for install steps (Linux runner, `tests/Steps.Tests.ps1`)
 - [ ] Tag-only release workflow publishing a zip; bootstrap uses releases
 - [ ] Dependabot for GitHub Actions (monthly)
