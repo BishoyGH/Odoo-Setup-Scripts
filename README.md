@@ -20,8 +20,8 @@ Or, in an Administrator PowerShell window:
 irm https://raw.githubusercontent.com/BishoyGH/Odoo-Setup-Scripts/main/bootstrap.ps1 | iex
 ```
 
-Running setup again opens a menu: **Install, Status, Back up now, Restore,
-Repair, Uninstall**.
+Running setup again opens a menu: **Install, Status, Update Odoo, Back up now,
+Restore, Repair, Uninstall**.
 
 ## What gets installed
 
@@ -116,6 +116,24 @@ format as Odoo's own database manager, so it can also be restored from
 * Back up now: setup menu, or `C:\Odoo\tools\odoo-ctl.ps1 backup`
 * Restore: setup menu, **Restore from a backup**
 * Log: `C:\Odoo\logs\backup.log`
+
+## Updating Odoo
+
+Setup menu, **Update Odoo** (or `setup.ps1 -Action Update`) installs the latest
+bug fixes for the installed Odoo version and community add-ons:
+
+1. Downloads the new source while Odoo keeps running. If nothing changed
+   upstream it stops there.
+2. Checks free disk space, stops Odoo and takes a normal backup ZIP (kept).
+3. Keeps a copy of the database, attachments, Python environment and old
+   source for a fast rollback.
+4. Installs the new source and Python packages and runs `odoo-bin -u all`.
+5. Starts Odoo and checks the login page answers.
+
+If any step from 3 on fails, everything is put back as it was. If the PC is
+switched off during an update, the next **Update Odoo** undoes it first.
+Odoo is unavailable for about 10-30 minutes. Moving to a new major version
+(for example 18.0 to 19.0) is not done here. Log: `C:\Odoo\logs\update_*.log`.
 
 ## Everyday commands
 

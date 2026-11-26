@@ -266,6 +266,35 @@ function Get-OdooServiceArguments {
     return $cmd
 }
 
+function Get-PreUpdateDatabaseName {
+    <# Name of the database copy kept while "Update Odoo" runs. PostgreSQL names are at most 63 bytes. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$DbName)
+    $suffix = '_preupdate'
+    $max = 63 - $suffix.Length
+    if ($DbName.Length -gt $max) { $DbName = $DbName.Substring(0, $max) }
+    return $DbName + $suffix
+}
+
+function Get-UpdateFreeSpaceNeededMB {
+    <#
+      Disk space "Update Odoo" needs on the install drive: a copy of the database,
+      attachments and Python environment for rollback, the new source trees, the
+      pre-update backup when it is written to the same drive, and 1 GB of headroom.
+    #>
+    [CmdletBinding()]
+    param(
+        [double]$DatabaseMB = 0,
+        [double]$FilestoreMB = 0,
+        [double]$VenvMB = 0,
+        [double]$NewSourceMB = 0,
+        [bool]$BackupOnSameDrive = $false
+    )
+    $need = $DatabaseMB + $FilestoreMB + $VenvMB + $NewSourceMB + 1024
+    if ($BackupOnSameDrive) { $need += $DatabaseMB + $FilestoreMB }
+    return [int][Math]::Ceiling($need)
+}
+
 function Get-InstallPaths {
     <# All install locations, derived from the root folder (default C:\Odoo). #>
     [CmdletBinding()]
