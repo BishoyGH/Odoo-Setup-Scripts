@@ -266,6 +266,107 @@ function Get-OdooServiceArguments {
     return $cmd
 }
 
+function Get-ActiveHoursSpan {
+    <# Hours from Start to End on a 24-hour clock; End may be past midnight (22 -> 6 is 8 hours). #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$Start, [Parameter(Mandatory)][int]$End)
+    return ((($End - $Start) % 24) + 24) % 24
+}
+
+function Test-ActiveHours {
+    <#
+      Windows Update active hours: whole hours 0-23, start and end differ, and
+      Windows accepts at most 18 hours, which leaves a window for restarts.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$Start, [Parameter(Mandatory)][int]$End)
+    if ($Start -lt 0 -or $Start -gt 23 -or $End -lt 0 -or $End -gt 23) { return $false }
+    $span = Get-ActiveHoursSpan -Start $Start -End $End
+    return ($span -ge 1 -and $span -le 18)
+}
+
+function Get-HealthCheckAction {
+    <#
+      Decides what the health-check task does on one run. Returns one of:
+        paused   setup, restore or "odoo-ctl stop" asked us to leave Odoo alone
+        missing  the Odoo service is not installed
+        ok       Odoo answers
+        start    the service is stopped (it crashed and Windows gave up restarting it)
+        wait     not answering yet, but starting, just started, or below the failure threshold
+        restart  not answering for Threshold checks in a row
+        backoff  too many restarts in the last hour; restarting again would not help
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()][string]$ServiceStatus,
+        [bool]$HttpOk,
+        [int]$PreviousFailures = 0,
+        [bool]$Paused = $false,
+        [double]$ServiceUptimeMinutes = 999,
+        [int]$RestartsLastHour = 0,
+        [int]$Threshold = 2,
+        [double]$GraceMinutes = 5,
+        [int]$MaxRestartsPerHour = 3
+    )
+    if ($Paused) { return 'paused' }
+    if (-not $ServiceStatus) { return 'missing' }
+    if ($ServiceStatus -eq 'Running' -and $HttpOk) { return 'ok' }
+    if ($ServiceStatus -match 'Pending$') { return 'wait' }
+    if ($RestartsLastHour -ge $MaxRestartsPerHour) { return 'backoff' }
+    if ($ServiceStatus -eq 'Stopped') { return 'start' }
+    if ($ServiceUptimeMinutes -lt $GraceMinutes) { return 'wait' }
+    if (($PreviousFailures + 1) -ge $Threshold) { return 'restart' }
+    return 'wait'
+}
+
+function Get-AnswersProblems {
+    <#
+      Checks an answers file before it is shipped in a reseller package.
+      Returns a list of problems (empty when the file can install with no questions).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Answers,
+        [Parameter(Mandatory)][string[]]$OdooVersions,
+        [string[]]$AppKeys = @(),
+        [string[]]$BundleKeys = @()
+    )
+    $problems = @()
+    $known = @('Root', 'Mode', 'OdooVersion', 'RamProfile', 'Ssd', 'PgPort', 'HttpPort', 'CompanyName', 'DbName',
+        'AdminLogin', 'AdminPassword', 'UiLanguage', 'Apps', 'OcaBundles', 'WithDemo', 'Defender', 'DisableSleep',
+        'MakeNetworkPrivate', 'Backup', 'ActiveHours', 'HealthCheck')
+    foreach ($k in $Answers.Keys) { if ($known -notcontains $k) { $problems += ('Unknown setting "{0}" (typo?).' -f $k) } }
+    if ($Answers.Contains('Root') -and $Answers.Root -notmatch '^[A-Za-z]:\\[^"<>|?*]*$') { $problems += 'Root must be a folder like C:\Odoo.' }
+    if ($Answers.Contains('Mode') -and @('prod', 'dev') -notcontains $Answers.Mode) { $problems += 'Mode must be "prod" or "dev".' }
+    if ($Answers.Contains('OdooVersion') -and $OdooVersions -notcontains $Answers.OdooVersion) {
+        $problems += ('OdooVersion must be one of: {0}.' -f ($OdooVersions -join ', '))
+    }
+    if ($Answers.Contains('RamProfile') -and @('4GB', '8GB', '16GB') -notcontains $Answers.RamProfile) { $problems += 'RamProfile must be 4GB, 8GB or 16GB.' }
+    if ($Answers.Contains('UiLanguage') -and @('ar_001', 'en_US') -notcontains $Answers.UiLanguage) { $problems += 'UiLanguage must be ar_001 or en_US.' }
+    if (-not $Answers.Contains('DbName') -or -not (Test-DatabaseName ([string]$Answers.DbName))) {
+        $problems += 'DbName is required: start with a letter, then letters, digits, _ . - only.'
+    }
+    if (-not $Answers.Contains('CompanyName') -or ([string]$Answers.CompanyName).Length -lt 2) { $problems += 'CompanyName is required.' }
+    if ($Answers.Contains('Apps')) {
+        foreach ($a in @($Answers.Apps)) { if ($AppKeys.Count -gt 0 -and $AppKeys -notcontains $a) { $problems += ('Unknown app "{0}".' -f $a) } }
+    }
+    if ($Answers.Contains('OcaBundles')) {
+        foreach ($b in @($Answers.OcaBundles)) { if ($BundleKeys.Count -gt 0 -and $BundleKeys -notcontains $b) { $problems += ('Unknown OCA bundle "{0}".' -f $b) } }
+    }
+    if ($Answers.Contains('Backup') -and $Answers.Backup -is [System.Collections.IDictionary] -and $Answers.Backup.Enabled) {
+        $b = $Answers.Backup
+        if (-not $b.Contains('Dir') -or [string]$b.Dir -notmatch '^[A-Za-z]:\\') { $problems += 'Backup.Dir must be a folder like D:\OdooBackups when backups are enabled.' }
+        if ($b.Contains('Time') -and [string]$b.Time -notmatch '^([01]\d|2[0-3]):[0-5]\d$') { $problems += 'Backup.Time must be HH:mm (24h).' }
+    }
+    if ($Answers.Contains('ActiveHours') -and $Answers.ActiveHours -is [System.Collections.IDictionary] -and $Answers.ActiveHours.Enabled) {
+        $h = $Answers.ActiveHours
+        if (-not (Test-ActiveHours -Start ([int]$h.Start) -End ([int]$h.End))) {
+            $problems += 'ActiveHours Start/End must be hours 0-23, at most 18 hours apart.'
+        }
+    }
+    return $problems
+}
+
 function Get-InstallPaths {
     <# All install locations, derived from the root folder (default C:\Odoo). #>
     [CmdletBinding()]

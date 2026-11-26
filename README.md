@@ -49,6 +49,8 @@ are cached in `C:\Odoo\downloads`.
 | Demo data | Never | Optional |
 | Auto-reload on code change | No | Yes (`--dev=reload,xml`) |
 | Daily backups | Optional | No |
+| No update restarts in business hours | Yes (08:00-23:00 by default) | No |
+| Health check every 5 minutes | Yes | No |
 
 ## Egyptian setup
 
@@ -129,12 +131,48 @@ C:\Odoo\tools\odoo-ctl.ps1 backup
 
 Your own modules go in `C:\Odoo\addons\custom` (already on the addons path).
 
+## Keeping it running
+
+Production installs add two safeguards (both can be turned off in the questions):
+
+* **Windows Update active hours.** You give the business day (08:00 to 23:00
+  by default, at most 18 hours, a Windows limit). Windows will not restart the
+  PC for updates inside those hours. This uses the documented Windows Update
+  policy, so the setting cannot drift; Uninstall removes it.
+* **Health check.** A scheduled task checks `http://127.0.0.1:8069/web/login`
+  every 5 minutes. If Odoo fails to answer twice in a row, or its service has
+  stopped, it restarts the service (and PostgreSQL if needed). It gives Odoo 5
+  minutes after a start, stays out of the way during setup, restore and
+  `odoo-ctl stop` / `update`, and stops after 3 restarts in an hour so a broken
+  install is not restarted forever. Every action goes to
+  `C:\Odoo\logs\health-check.log`; Status shows the last result.
+
+`odoo-ctl stop` pauses the health check for up to 6 hours; `odoo-ctl start`
+resumes it.
+
 ## Unattended install
 
 ```powershell
 copy config\answers.example.psd1 my-answers.psd1   # edit it
 powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Action Install -ConfigFile .\my-answers.psd1
 ```
+
+### Reseller package
+
+For installing at clients: one ZIP that runs with no questions.
+
+```powershell
+copy config\answers.example.psd1 nile-answers.psd1      # fill in the client's details
+powershell -ExecutionPolicy Bypass -File .\reseller\New-ResellerPackage.ps1 -AnswersFile .\nile-answers.psd1
+```
+
+The answers file is checked first (typos in setting names, Odoo version,
+database name, apps, backup folder, business hours). The ZIP lands in `dist\`
+and contains the installer, `answers.psd1`, `install-unattended.cmd` and a
+short `READ-ME-FIRST.txt`. On the client PC: extract it and double-click
+**`install-unattended.cmd`**. If it is interrupted, run it again and it resumes.
+Leave `AdminPassword` empty so a password is generated on the client PC
+instead of travelling inside the ZIP.
 
 ## Credentials and security
 

@@ -64,3 +64,29 @@ Describe 'Add-on catalog' {
         $acc.Modules | Should -Contain 'l10n_eg'
     }
 }
+
+Describe 'Answers files' {
+    BeforeAll {
+        Import-Module (Join-Path $root 'lib\OdooSetup.Logic.psm1') -Force
+        $appKeys = [string[]]@($catalog.Apps | ForEach-Object { $_.Key })
+        $bundleKeys = [string[]]@($catalog.OcaBundles | ForEach-Object { $_.Key })
+    }
+    It 'config\answers.example.psd1 passes the reseller package checks' {
+        $a = Import-PowerShellDataFile (Join-Path $root 'config\answers.example.psd1')
+        @(Get-AnswersProblems -Answers $a -OdooVersions $components.OdooVersions -AppKeys $appKeys -BundleKeys $bundleKeys) | Should -BeNullOrEmpty
+    }
+    It 'the setup defaults keep Windows Update active hours valid' {
+        $text = Get-Content -Raw (Join-Path $root 'setup.ps1')
+        $text -match 'ActiveHours\s*=\s*\[ordered\]@\{ Enabled = \$true; Start = (\d+); End = (\d+) \}' | Should -BeTrue
+        Test-ActiveHours -Start ([int]$Matches[1]) -End ([int]$Matches[2]) | Should -BeTrue
+    }
+}
+
+Describe 'Runtime tools' {
+    It 'copies every script the scheduled tasks call into tools\' {
+        $steps = Get-Content -Raw (Join-Path $root 'lib\OdooSetup.Steps.psm1')
+        foreach ($f in @('backup.ps1', 'health-check.ps1', 'odoo-ctl.ps1', 'OdooSetup.Logic.psm1')) {
+            $steps | Should -Match ([regex]::Escape("\$f')"))
+        }
+    }
+}
