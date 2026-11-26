@@ -55,9 +55,18 @@ are cached in `C:\Odoo\downloads`.
 * Company country **Egypt**, currency **EGP**, timezone **Africa/Cairo**.
 * `l10n_eg` Egyptian chart of accounts and taxes.
 * **Arabic** and English installed; the administrator's language is your choice.
+* **Arabic installer**: the first question picks English or Arabic. Arabic shows
+  each question in Arabic with the English text underneath (best in Windows
+  Terminal). Skip the question with `.\setup.ps1 -Language ar` or `-Language en`.
+* **Arabic PDF invoices**: Arabic companies print with Odoo's Tajawal report
+  font, and Noto Naskh Arabic / Noto Kufi Arabic are installed for all users as
+  a fallback.
 * Optional **ETA e-invoicing** (`l10n_eg_edi_eta`). Signing invoices needs the
-  company's USB token and ETA portal credentials, which you configure in
-  Accounting settings after install.
+  company's USB token, its ePass2003 driver and ETA portal credentials. Setup
+  warns if the driver is missing. Step by step:
+  [docs/ETA-EINVOICING.md](docs/ETA-EINVOICING.md).
+* Optional **Egyptian payroll** on OCA Payroll: social insurance, salary income
+  tax and Martyrs Fund. See [docs/EGYPT-PAYROLL.md](docs/EGYPT-PAYROLL.md).
 
 ## Apps and community add-ons
 
@@ -75,7 +84,7 @@ OCA add-ons that fill gaps in Community:
 | MIS Builder* | Profit & Loss and Balance Sheet templates |
 | Bank reconciliation* | Bank statements and the reconciliation screen |
 | Fixed assets | Assets and depreciation |
-| Payroll | Generic payroll engine (add Egyptian rules yourself) |
+| Payroll | OCA payroll engine plus Egyptian rules (`addons/l10n_eg_payroll_oss`) |
 | Environment ribbon | "DEV" banner (development only) |
 
 If an add-on is not yet available for the chosen Odoo version it is skipped
@@ -163,3 +172,8 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Action Install -ConfigFile
   (`windows-e2e.yml`) is available as a manual workflow.
 
 Run the tests locally with `Invoke-Pester ./tests` and `./tests/Invoke-Lint.ps1`.
+The payroll rules have plain Python tests: `python -m unittest discover -s tests/python`.
+
+Installer text in Arabic lives in `config/i18n/ar.json`, keyed by the English
+string, so the PowerShell files stay ASCII. A Pester test fails when a prompt in
+`setup.ps1` has no Arabic entry.

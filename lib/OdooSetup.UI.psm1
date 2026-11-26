@@ -5,6 +5,90 @@ Set-StrictMode -Version 2.0
 
 $script:StepIndex = 0
 $script:StepTotal = 0
+$script:UiLanguage = 'en'
+$script:UiStrings = @{}
+
+# ------------------------------------------------------------ language -----
+# Translations live in config\i18n\<lang>.json (UTF-8), keyed by the English text,
+# so these .psm1 files stay pure ASCII for Windows PowerShell 5.1.
+
+function Get-UiStringsPath {
+    param([Parameter(Mandatory)][string]$Language)
+    $root = Split-Path $PSScriptRoot -Parent
+    return (Join-Path (Join-Path (Join-Path $root 'config') 'i18n') ($Language + '.json'))
+}
+
+function Import-UiStrings {
+    <# Returns the translation table for a language as a hashtable ('en' is empty: English is the key). #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Language)
+    $table = @{}
+    if ($Language -eq 'en') { return $table }
+    $path = Get-UiStringsPath -Language $Language
+    if (-not (Test-Path $path)) { return $table }
+    $json = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8) | ConvertFrom-Json
+    foreach ($p in $json.PSObject.Properties) { $table[$p.Name] = $p.Value }
+    return $table
+}
+
+function Set-UiLanguage {
+    <# 'en' = English only. 'ar' = Arabic prompts with the English text underneath. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][ValidateSet('en', 'ar')][string]$Language)
+    $script:UiStrings = Import-UiStrings -Language $Language
+    $script:UiLanguage = $Language
+    if ($Language -ne 'en' -and $script:UiStrings.Count -eq 0) { $script:UiLanguage = 'en' }
+    if ($script:UiLanguage -ne 'en') {
+        try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { Write-Verbose 'Console encoding unchanged.' }
+    }
+}
+
+function Get-UiLanguage { return $script:UiLanguage }
+
+function Get-DefaultUiLanguage {
+    <# Arabic when Windows itself is in Arabic, otherwise English. #>
+    param([string]$CultureName = (Get-UICulture).Name)
+    if ($CultureName -like 'ar*') { return 'ar' }
+    return 'en'
+}
+
+function Get-UiText {
+    <#
+      Translates an English UI string (exact match) and fills {0} placeholders.
+      Unknown strings come back in English, so a missing translation never breaks a prompt.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text, [Parameter(ValueFromRemainingArguments)][object[]]$FormatArgs)
+    $out = $Text
+    if ($script:UiLanguage -ne 'en' -and $Text -and $script:UiStrings.ContainsKey($Text)) { $out = [string]$script:UiStrings[$Text] }
+    if ($FormatArgs -and $FormatArgs.Count -gt 0) { $out = $out -f $FormatArgs }
+    return $out
+}
+
+function Test-UiTranslated {
+    param([AllowEmptyString()][string]$Text)
+    return ($script:UiLanguage -ne 'en' -and $Text -and $script:UiStrings.ContainsKey($Text))
+}
+
+function Write-EnglishHint {
+    <# In Arabic mode, repeats the English original in grey so the question is clear even if Arabic renders poorly. #>
+    param([AllowEmptyString()][string]$Text, [string]$Indent = '     ')
+    if (Test-UiTranslated $Text) { Write-Host ($Indent + $Text) -ForegroundColor DarkGray }
+}
+
+function Test-YesAnswer {
+    param([AllowEmptyString()][string]$Answer)
+    $yes = @('y', 'yes')
+    if ($script:UiStrings.ContainsKey('_yes')) { $yes += @($script:UiStrings['_yes']) }
+    return ($yes -contains $Answer)
+}
+
+function Test-NoAnswer {
+    param([AllowEmptyString()][string]$Answer)
+    $no = @('n', 'no')
+    if ($script:UiStrings.ContainsKey('_no')) { $no += @($script:UiStrings['_no']) }
+    return ($no -contains $Answer)
+}
 
 function Write-Banner {
     [CmdletBinding()]
@@ -31,7 +115,8 @@ function Write-Section {
     $line = '=' * [Math]::Max(60, $Title.Length + 4)
     Write-Host ''
     Write-Host $line -ForegroundColor DarkCyan
-    Write-Host ('  ' + $Title) -ForegroundColor Cyan
+    Write-Host ('  ' + (Get-UiText $Title)) -ForegroundColor Cyan
+    Write-EnglishHint $Title -Indent '  '
     Write-Host $line -ForegroundColor DarkCyan
 }
 
@@ -60,7 +145,7 @@ function Write-Fail { param([string]$Message) Write-Host '   [FAIL] ' -Foregroun
 function Write-KeyValue {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Key, [AllowEmptyString()][string]$Value, [int]$Width = 24)
-    Write-Host ('   ' + $Key.PadRight($Width)) -ForegroundColor DarkCyan -NoNewline
+    Write-Host ('   ' + (Get-UiText $Key).PadRight($Width)) -ForegroundColor DarkCyan -NoNewline
     Write-Host $Value -ForegroundColor White
 }
 
@@ -73,14 +158,15 @@ function Read-Value {
         [string]$ValidationMessage = 'Invalid value, please try again.'
     )
     while ($true) {
-        Write-Host ('   ? ' + $Prompt) -ForegroundColor Magenta -NoNewline
+        Write-EnglishHint $Prompt
+        Write-Host ('   ? ' + (Get-UiText $Prompt)) -ForegroundColor Magenta -NoNewline
         if ($Default -ne '') { Write-Host (' [' + $Default + ']') -ForegroundColor DarkGray -NoNewline }
         Write-Host ': ' -NoNewline
         $answer = Read-Host
         if ([string]::IsNullOrWhiteSpace($answer)) { $answer = $Default }
         $answer = $answer.Trim()
         if (-not $Validate -or (& $Validate $answer)) { return $answer }
-        Write-Warn $ValidationMessage
+        Write-Warn (Get-UiText $ValidationMessage)
     }
 }
 
@@ -90,13 +176,14 @@ function Read-YesNo {
     $hint = 'y/N'
     if ($Default) { $hint = 'Y/n' }
     while ($true) {
-        Write-Host ('   ? ' + $Prompt) -ForegroundColor Magenta -NoNewline
+        Write-EnglishHint $Prompt
+        Write-Host ('   ? ' + (Get-UiText $Prompt)) -ForegroundColor Magenta -NoNewline
         Write-Host (' [' + $hint + ']: ') -ForegroundColor DarkGray -NoNewline
         $answer = (Read-Host).Trim().ToLowerInvariant()
         if ($answer -eq '') { return $Default }
-        if ($answer -in @('y', 'yes')) { return $true }
-        if ($answer -in @('n', 'no')) { return $false }
-        Write-Warn 'Please answer y or n.'
+        if (Test-YesAnswer $answer) { return $true }
+        if (Test-NoAnswer $answer) { return $false }
+        Write-Warn (Get-UiText 'Please answer y or n.')
     }
 }
 
@@ -108,17 +195,18 @@ function Read-Choice {
         [Parameter(Mandatory)][string[]]$Options,
         [int]$DefaultIndex = 0
     )
-    Write-Host ('   ? ' + $Prompt) -ForegroundColor Magenta
+    Write-EnglishHint $Prompt
+    Write-Host ('   ? ' + (Get-UiText $Prompt)) -ForegroundColor Magenta
     for ($i = 0; $i -lt $Options.Count; $i++) {
         $marker = '  '
         $color = 'Gray'
         if ($i -eq $DefaultIndex) { $marker = '> '; $color = 'White' }
         Write-Host ('     ' + $marker) -ForegroundColor Green -NoNewline
         Write-Host ('{0}) ' -f ($i + 1)) -ForegroundColor Yellow -NoNewline
-        Write-Host $Options[$i] -ForegroundColor $color
+        Write-Host (Get-UiText $Options[$i]) -ForegroundColor $color
     }
     $max = $Options.Count
-    $answer = Read-Value -Prompt ('Choose 1-{0}' -f $max) -Default ([string]($DefaultIndex + 1)) -Validate {
+    $answer = Read-Value -Prompt (Get-UiText 'Choose 1-{0}' $max) -Default ([string]($DefaultIndex + 1)) -Validate {
         param($v) $n = 0; [int]::TryParse($v, [ref]$n) -and $n -ge 1 -and $n -le $max
     }.GetNewClosure()
     return ([int]$answer - 1)
@@ -134,16 +222,17 @@ function Read-MultiChoice {
     $selected = @{}
     foreach ($item in $Items) { $selected[$item.Key] = [bool]$item.Default }
     while ($true) {
-        Write-Host ('   ? ' + $Prompt) -ForegroundColor Magenta
+        Write-EnglishHint $Prompt
+        Write-Host ('   ? ' + (Get-UiText $Prompt)) -ForegroundColor Magenta
         for ($i = 0; $i -lt $Items.Count; $i++) {
             $on = $selected[$Items[$i].Key]
             $box = '[ ]'; $color = 'DarkGray'
             if ($on) { $box = '[x]'; $color = 'White' }
             Write-Host ('     {0,2}) ' -f ($i + 1)) -ForegroundColor Yellow -NoNewline
             Write-Host ($box + ' ') -ForegroundColor Green -NoNewline
-            Write-Host $Items[$i].Name -ForegroundColor $color
+            Write-Host (Get-UiText $Items[$i].Name) -ForegroundColor $color
         }
-        Write-Host '     Type numbers to toggle (e.g. 2 5), A = all, N = none, Enter = accept' -ForegroundColor DarkGray
+        Write-Host ('     ' + (Get-UiText 'Type numbers to toggle (e.g. 2 5), A = all, N = none, Enter = accept')) -ForegroundColor DarkGray
         Write-Host '   > ' -ForegroundColor Magenta -NoNewline
         $answer = (Read-Host).Trim()
         if ($answer -eq '') { break }
@@ -165,15 +254,16 @@ function Read-Password {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Prompt, [int]$MinLength = 8)
     while ($true) {
-        Write-Host ('   ? ' + $Prompt + ' (Enter = generate a strong one): ') -ForegroundColor Magenta -NoNewline
+        Write-EnglishHint $Prompt
+        Write-Host ('   ? ' + (Get-UiText $Prompt) + ' ' + (Get-UiText '(Enter = generate a strong one)') + ': ') -ForegroundColor Magenta -NoNewline
         $first = Read-Host -AsSecureString
         $plain = ConvertFrom-SecureStringPlain $first
         if ($plain -eq '') { return '' }
-        if ($plain.Length -lt $MinLength) { Write-Warn ("Use at least {0} characters." -f $MinLength); continue }
-        Write-Host '   ? Repeat password: ' -ForegroundColor Magenta -NoNewline
+        if ($plain.Length -lt $MinLength) { Write-Warn (Get-UiText 'Use at least {0} characters.' $MinLength); continue }
+        Write-Host ('   ? ' + (Get-UiText 'Repeat password') + ': ') -ForegroundColor Magenta -NoNewline
         $second = ConvertFrom-SecureStringPlain (Read-Host -AsSecureString)
         if ($plain -ceq $second) { return $plain }
-        Write-Warn 'Passwords do not match.'
+        Write-Warn (Get-UiText 'Passwords do not match.')
     }
 }
 
@@ -188,7 +278,7 @@ function ConvertFrom-SecureStringPlain {
 function Wait-AnyKey {
     param([string]$Message = 'Press Enter to continue...')
     Write-Host ''
-    Write-Host ('   ' + $Message) -ForegroundColor DarkGray -NoNewline
+    Write-Host ('   ' + (Get-UiText $Message)) -ForegroundColor DarkGray -NoNewline
     [void](Read-Host)
 }
 

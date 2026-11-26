@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Monthly Egyptian salary rules. The legal rates and limits live in models/eg_rules.py
+    (tools.egypt), so a module update refreshes them without touching edited rules.
+    Add allowances as extra rules in the "Allowance" category: they count towards the
+    gross wage, social insurance and income tax.
+-->
+<odoo noupdate="1">
+    <record id="rule_basic" model="hr.salary.rule">
+        <field name="name">Basic Salary</field>
+        <field name="sequence" eval="1" />
+        <field name="code">BASIC</field>
+        <field name="category_id" ref="category_basic" />
+        <field name="condition_select">none</field>
+        <field name="amount_select">code</field>
+        <field name="amount_python_compute">result = contract.wage</field>
+    </record>
+    <record id="rule_gross" model="hr.salary.rule">
+        <field name="name">Gross Salary</field>
+        <field name="sequence" eval="100" />
+        <field name="code">GROSS</field>
+        <field name="category_id" ref="category_gross" />
+        <field name="condition_select">none</field>
+        <field name="amount_select">code</field>
+        <field name="amount_python_compute">result = categories.BASIC + categories.ALW</field>
+    </record>
+    <record id="rule_si_employee" model="hr.salary.rule">
+        <field name="name">Social Insurance (Employee 11%)</field>
+        <field name="sequence" eval="110" />
+        <field name="code">SI_EE</field>
+        <field name="category_id" ref="category_ded" />
+        <field name="condition_select">none</field>
+        <field name="amount_select">code</field>
+        <field name="amount_python_compute">
+# Insurable wage: the "SI_WAGE" payslip input when the employee is registered with a
+# fixed insurance wage for the year, otherwise this month's gross. Clamped to the legal range.
+si_input = inputs.SI_WAGE
+base = si_input and si_input.amount or categories.GROSS
+result = -tools.egypt.employee_social_insurance(base)
+        </field>
+        <field name="note">Law 148/2019. Limits per year are in models/eg_rules.py.</field>
+    </record>
+    <record id="rule_si_employee_input" model="hr.rule.input">
+        <field name="name">Insurable wage registered with NOSI (leave 0 to use gross)</field>
+        <field name="code">SI_WAGE</field>
+        <field name="input_id" ref="rule_si_employee" />
+    </record>
+    <record id="rule_si_employer" model="hr.salary.rule">
+        <field name="name">Social Insurance (Company 18.75%)</field>
+        <field name="sequence" eval="115" />
+        <field name="code">SI_ER</field>
+        <field name="category_id" ref="category_comp" />
+        <field name="condition_select">none</field>
+        <field name="amount_select">code</field>
+        <field name="amount_python_compute">
+si_input = inputs.SI_WAGE
+base = si_input and si_input.amount or categories.GROSS
+result = tools.egypt.employer_social_insurance(base)
+        </field>
+        <field name="note">Paid by the company; not deducted from the net salary.</field>
+    </record>
+    <record id="rule_martyrs_fund" model="hr.salary.rule">
+        <field name="name">Martyrs Fund (0.05%)</field>
+        <field name="sequence" eval="120" />
+        <field name="code">MARTYRS</field>
+        <field name="category_id" ref="category_ded" />
+        <field name="condition_select">none</field>
+        <field name="amount_select">code</field>
+        <field name="amount_python_compute">result = -tools.egypt.martyrs_fund(categories.GROSS)</field>
+        <field name="note">Law 4/2021.</field>
+    </record>
+    <record id="rule_salary_tax" model="hr.salary.rule">
+        <field name="name">Salary Income Tax</field>
+        <field name="sequence" eval="130" />
+        <field name="code">TAX</field>
+        <field name="category_id" ref="category_ded" />
+        <field name="condition_select">none</field>
+        <field name="amount_select">code</field>
+        <field name="amount_python_compute">
+# SI_EE is negative (a deduction), so -SI_EE is the insurance the employee paid.
+result = -tools.egypt.monthly_salary_tax(categories.GROSS, -SI_EE)
+        </field>
+        <field name="note">Law 91/2005 as amended by Law 7/2024: EGP 20,000 personal exemption, brackets 0% to 27.5%.</field>
+    </record>
+    <record id="rule_net" model="hr.salary.rule">
+        <field name="name">Net Salary</field>
+        <field name="sequence" eval="200" />
+        <field name="code">NET</field>
+        <field name="category_id" ref="category_net" />
+        <field name="condition_select">none</field>
+        <field name="amount_select">code</field>
+        <field name="amount_python_compute">result = categories.BASIC + categories.ALW + categories.DED</field>
+    </record>
+</odoo>

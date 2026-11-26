@@ -18,13 +18,19 @@
 
 .PARAMETER Root
   Installation folder for Repair/Backup/Restore/Status/Uninstall when it is not C:\Odoo.
+
+.PARAMETER Language
+  Installer language: 'en' (English) or 'ar' (Arabic, with the English text underneath).
+  Left out, the interactive installer asks; unattended runs use English.
 #>
 [CmdletBinding()]
 param(
     [ValidateSet('Menu', 'Install', 'Repair', 'Backup', 'Restore', 'Status', 'Uninstall')]
     [string]$Action = 'Menu',
     [string]$ConfigFile = '',
-    [string]$Root = 'C:\Odoo'
+    [string]$Root = 'C:\Odoo',
+    [ValidateSet('', 'en', 'ar')]
+    [string]$Language = ''
 )
 
 Set-StrictMode -Version 2.0
@@ -34,6 +40,7 @@ $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $script:InstallRoot = $Root
 Import-Module (Join-Path $here 'lib\OdooSetup.Maintenance.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $here 'lib\OdooSetup.Egypt.psm1') -Force -DisableNameChecking
 
 $script:Components = Import-PowerShellDataFile (Join-Path $here 'config\components.psd1')
 $script:Catalog = Import-PowerShellDataFile (Join-Path $here 'config\addons.psd1')
@@ -69,7 +76,7 @@ function Get-DefaultSettings {
 function Read-InstallSettings {
     $s = Get-DefaultSettings
     Write-Section 'Setup questions'
-    Write-Host '   Press Enter to accept the value in [brackets].' -ForegroundColor DarkGray
+    Write-Host ('   ' + (Get-UiText 'Press Enter to accept the value in [brackets].')) -ForegroundColor DarkGray
     Write-Host ''
 
     $mode = Read-Choice -Prompt 'What kind of installation is this?' -Options @(
@@ -81,8 +88,8 @@ function Read-InstallSettings {
     $versions = [string[]]$script:Components.OdooVersions
     $labels = foreach ($v in $versions) {
         $note = ''
-        if ($v -eq $script:Components.DefaultVersion) { $note = '  (recommended: all community apps available)' }
-        elseif ([double]$v -gt [double]$script:Components.DefaultVersion) { $note = '  (newest; some community apps not ported yet)' }
+        if ($v -eq $script:Components.DefaultVersion) { $note = '  ' + (Get-UiText '(recommended: all community apps available)') }
+        elseif ([double]$v -gt [double]$script:Components.DefaultVersion) { $note = '  ' + (Get-UiText '(newest; some community apps not ported yet)') }
         'Odoo ' + $v + $note
     }
     $s.OdooVersion = $versions[(Read-Choice -Prompt 'Which Odoo version?' -Options $labels -DefaultIndex ([array]::IndexOf($versions, $s.OdooVersion)))]
@@ -91,7 +98,7 @@ function Read-InstallSettings {
 
     $ram = Get-TotalMemoryGB
     $profiles = @('4GB', '8GB', '16GB')
-    $pi = Read-Choice -Prompt ('Detected {0} GB RAM. Which tuning profile?' -f $ram) -Options @(
+    $pi = Read-Choice -Prompt (Get-UiText 'Detected {0} GB RAM. Which tuning profile?' $ram) -Options @(
         '4 GB  - small office, up to ~5 users', '8 GB  - up to ~15 users', '16 GB+ - up to ~25 users'
     ) -DefaultIndex ([array]::IndexOf($profiles, $s.RamProfile))
     $s.RamProfile = $profiles[$pi]
@@ -132,7 +139,7 @@ function Read-InstallSettings {
         $s.DisableSleep = Read-YesNo -Prompt 'Prevent this PC from sleeping while plugged in (needed for a server)?' -Default $true
         $public = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object { $_.NetworkCategory -eq 'Public' })
         if ($public.Count -gt 0) {
-            $s.MakeNetworkPrivate = Read-YesNo -Prompt ('Network "{0}" is Public, which blocks other PCs. Switch it to Private?' -f $public[0].Name) -Default $true
+            $s.MakeNetworkPrivate = Read-YesNo -Prompt (Get-UiText 'Network "{0}" is Public, which blocks other PCs. Switch it to Private?' $public[0].Name) -Default $true
         }
     }
     return $s
@@ -151,19 +158,19 @@ function Merge-Settings {
 function Show-Summary {
     param([System.Collections.IDictionary]$S)
     Write-Section 'Summary'
-    Write-KeyValue 'Mode' $(if ($S.Mode -eq 'prod') { 'Production' } else { 'Development' })
+    Write-KeyValue 'Mode' $(if ($S.Mode -eq 'prod') { Get-UiText 'Production' } else { Get-UiText 'Development' })
     Write-KeyValue 'Odoo version' $S.OdooVersion
     Write-KeyValue 'Install folder' $S.Root
     Write-KeyValue 'RAM profile' ('{0} ({1})' -f $S.RamProfile, $(if ($S.Ssd) { 'SSD' } else { 'HDD' }))
     Write-KeyValue 'Company' $S.CompanyName
     Write-KeyValue 'Database' $S.DbName
     Write-KeyValue 'Admin login' $S.AdminLogin
-    Write-KeyValue 'Localization' 'Egypt, EGP, Africa/Cairo, Arabic + English'
+    Write-KeyValue 'Localization' (Get-UiText 'Egypt, EGP, Africa/Cairo, Arabic + English')
     Write-KeyValue 'Apps' ($S.Apps -join ', ')
     Write-KeyValue 'OCA add-ons' ($S.OcaBundles -join ', ')
     if ($S.Mode -eq 'prod') {
-        $b = 'disabled'
-        if ($S.Backup.Enabled) { $b = '{0} daily at {1}, keep {2} days' -f $S.Backup.Dir, $S.Backup.Time, $S.Backup.RetentionDays }
+        $b = Get-UiText 'disabled'
+        if ($S.Backup.Enabled) { $b = Get-UiText '{0} daily at {1}, keep {2} days' $S.Backup.Dir $S.Backup.Time $S.Backup.RetentionDays }
         Write-KeyValue 'Backups' $b
     }
 }
@@ -203,6 +210,7 @@ function Invoke-Install {
         Write-Section 'Checking this PC'
         $problems = @(Test-Prerequisites -Paths $P)
         if ($problems.Count -gt 0) { foreach ($p in $problems) { Write-Fail $p }; throw 'Pre-flight checks failed.' }
+        if ($S.Apps -contains 'eta') { [void](Show-EtaTokenCheck) }
 
         # Port conflicts (ignore our own services on repair)
         $used = @(Get-UsedTcpPorts)
@@ -219,7 +227,7 @@ function Invoke-Install {
         Save-Settings -Paths $P -S $S
         $sel = Resolve-AddonSelection -Catalog $script:Catalog -AppKeys $S.Apps -BundleKeys $S.OcaBundles
         $isProd = ($S.Mode -eq 'prod')
-        $total = 18
+        $total = 19
         Initialize-StepCounter -Total $total
         Write-Section $(if ($Repair) { 'Repairing' } else { 'Installing' })
 
@@ -232,11 +240,13 @@ function Invoke-Install {
         Invoke-SetupStep -Id 'pg-service' -Title 'PostgreSQL Windows service' -Run { Install-PgService -Paths $P -Port $S.PgPort }
         Invoke-SetupStep -Id 'pg-role' -Title 'Odoo database role' -Run { Set-PgOdooRole -Paths $P -Port $S.PgPort -SuperPassword $X.PgSuperPassword -OdooPassword $X.OdooDbPassword }
         Invoke-SetupStep -Id 'wkhtmltopdf' -Title 'wkhtmltopdf (PDF reports)' -Test { Test-Wkhtmltopdf $P } -Run { Install-Wkhtmltopdf -Paths $P -Components $C }
+        Invoke-SetupStep -Id 'arabic-fonts' -Title 'Arabic fonts for PDF invoices' -Test { Test-ArabicFonts -Components $C } -Run { Install-ArabicFonts -Paths $P -Components $C }
         Invoke-SetupStep -Id 'odoo-source' -Title ('Odoo {0} source code' -f $S.OdooVersion) -Test { Test-SourceTree -Path $P.OdooSrc -Branch $S.OdooVersion } -Run { Install-OdooSource -Paths $P -Components $C -Version $S.OdooVersion }
         Invoke-SetupStep -Id 'odoo-venv' -Title 'Odoo Python packages' -Test { (-not $Repair) -and (Test-OdooVenv -Paths $P -Mode $S.Mode) } -Run { Install-OdooVenv -Paths $P -Mode $S.Mode -Rebuild:$Repair }
         Invoke-SetupStep -Id 'oca' -Title ('Community add-ons ({0} repositories)' -f $sel.Repos.Count) -Run { Install-OcaRepos -Paths $P -Components $C -Version $S.OdooVersion -Repos $sel.Repos }
         Invoke-SetupStep -Id 'config' -Title 'Odoo configuration and permissions' -Run {
             Copy-OdooTools -Paths $P
+            Copy-BundledAddons -Paths $P
             Write-OdooConfig -Paths $P -Settings $S -Secrets $X
             Write-CredentialsFile -Paths $P -Settings $S -Secrets $X
         }
@@ -307,7 +317,7 @@ function Show-Finish {
     Write-KeyValue 'All credentials' $P.Credentials
     Write-KeyValue 'Daily control' ('{0}\odoo-ctl.ps1 status|restart|logs|backup' -f $P.Tools)
     Write-Host ''
-    Write-Host '   Write down the password above and keep CREDENTIALS.txt safe.' -ForegroundColor Yellow
+    Write-Host ('   ' + (Get-UiText 'Write down the password above and keep CREDENTIALS.txt safe.')) -ForegroundColor Yellow
     if (-not $script:Unattended -and (Find-Chrome)) {
         if (Read-YesNo -Prompt 'Open Odoo now?' -Default $true) { Start-Process (Find-Chrome) ('--app=http://localhost:{0}/web' -f $S.HttpPort) }
     }
@@ -383,6 +393,18 @@ if (-not (Test-IsAdministrator)) {
 }
 
 Write-Banner
+if (-not $Language) {
+    $Language = Get-DefaultUiLanguage
+    if (-not $script:Unattended -and $Action -in @('Menu', 'Install')) {
+        $names = @('English', [string](Import-UiStrings -Language 'ar')['_language_name'])
+        if (-not $names[1]) { $names[1] = 'Arabic' }
+        $Language = @('en', 'ar')[(Read-Choice -Prompt 'Installer language' -Options $names -DefaultIndex ([array]::IndexOf(@('en', 'ar'), $Language)))]
+    }
+}
+Set-UiLanguage -Language $Language
+if ($Language -eq 'ar' -and -not $env:WT_SESSION) {
+    Write-Info 'Arabic text displays best in Windows Terminal. If you see boxes, the English text under each question says the same.'
+}
 if ($Action -ne 'Menu') {
     try { Invoke-Action $Action; exit 0 } catch { Write-Fail $_.Exception.Message; exit 1 }
 }

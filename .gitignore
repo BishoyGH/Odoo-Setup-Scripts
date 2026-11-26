@@ -2,3 +2,5 @@
 *.log
 testResults.xml
 my-answers.psd1
+__pycache__/
+*.pyc
