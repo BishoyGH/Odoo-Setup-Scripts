@@ -80,11 +80,11 @@ Progress tracker for the plan in [docs/PLAN.md](docs/PLAN.md).
 
 ## Phase 10: Logic updates
 - [ ] "Update Odoo" action: backup, refresh source, `-u all`, roll back on failure
-- [ ] Second backup copy (USB or network share)
-- [ ] Weekly automatic test-restore of the latest backup
+- [x] Second backup copy (USB drive or another partition; network shares not supported yet)
+- [x] Weekly automatic test-restore of the latest backup
 - [ ] Free-space check before backup
-- [ ] Status warns when the last good backup is older than 2 days
-- [ ] Windows notification on backup failure
+- [x] Status warns when the last good backup is older than 2 days
+- [x] Windows notification on backup failure (desktop warning + Application event log)
 - [ ] "Restore as test copy" with `odoo-bin neutralize`
 - [ ] Development: optional auto-start, Start/Stop shortcuts, module scaffold
 - [ ] Enable Windows long paths before extracting sources

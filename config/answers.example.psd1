@@ -17,5 +17,8 @@
     Defender      = $true
     DisableSleep  = $true
     MakeNetworkPrivate = $false
-    Backup        = @{ Enabled = $true; Dir = 'D:\OdooBackups'; Time = '22:00'; RetentionDays = 14 }
+    # CopyDir: optional second copy of every backup on a USB drive or another disk,
+    #          for example 'E:\OdooBackups'. '' = no second copy.
+    # TestRestoreDays: restore the newest backup into a throwaway database this often (0 = off).
+    Backup        = @{ Enabled = $true; Dir = 'D:\OdooBackups'; Time = '22:00'; RetentionDays = 14; CopyDir = ''; TestRestoreDays = 7 }
 }
