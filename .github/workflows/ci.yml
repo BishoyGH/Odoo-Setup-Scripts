@@ -37,6 +37,9 @@ env:
 
 jobs:
   lint-and-test:
+    # Draft PRs are skipped (no runner starts, no minutes used). The run starts
+    # when the PR is marked "Ready for review", then on every later push.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     # Linux minutes are the cheapest; all logic under test is OS-independent.
     runs-on: ubuntu-latest
     timeout-minutes: 10
