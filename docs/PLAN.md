@@ -77,7 +77,7 @@ C:\Odoo\
 | Log level | debug | warn |
 | `--dev` reload | on (watchdog) | off |
 | Environment ribbon (OCA) | yes ("DEV") | no |
-| Windows service | installed, manual start | automatic (delayed) start, auto-restart on crash |
+| Windows service | installed, manual start | automatic start at boot (no login needed), auto-restart on crash |
 | Sleep on AC power | unchanged | disabled (optional) |
 | Backups | not offered | optional daily backups to chosen partition |
 

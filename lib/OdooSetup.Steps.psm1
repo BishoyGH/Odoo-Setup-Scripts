@@ -606,7 +606,7 @@ function Install-OdooService {
     if ($r.ReturnValue -ne 0) { Write-Warn ('Could not switch the service account (code {0}); it runs as LocalSystem.' -f $r.ReturnValue) }
 
     $startType = 'demand'
-    if ($Settings.Mode -eq 'prod') { $startType = 'delayed-auto' }
+    if ($Settings.Mode -eq 'prod') { $startType = 'auto' }   # starts right after PostgreSQL, before anyone logs in
     & sc.exe config $script:OdooServiceName start= $startType | Out-Null
     & sc.exe config $script:OdooServiceName depend= $script:PgServiceName | Out-Null
 
