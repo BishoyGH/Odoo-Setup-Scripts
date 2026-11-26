@@ -1,0 +1,82 @@
+name: CI
+
+# Runs only when PowerShell code, configs, tests or this workflow change.
+# Docs-only changes (README, TASKS.md, docs/) never start a runner.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.ps1'
+      - '**.psm1'
+      - '**.psd1'
+      - '**.cmd'
+      - 'scripts/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '**.ps1'
+      - '**.psm1'
+      - '**.psd1'
+      - '**.cmd'
+      - 'scripts/**'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+# A new push cancels the run still going for the same branch/PR.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PESTER_VERSION: '5.7.1'
+  PSSA_VERSION: '1.24.0'
+
+jobs:
+  lint-and-test:
+    # Draft PRs are skipped (no runner starts, no minutes used). The run starts
+    # when the PR is marked "Ready for review", then on every later push.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # Linux minutes are the cheapest; all logic under test is OS-independent.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Cache PowerShell modules
+        id: psmodules
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/powershell/Modules
+          key: psmodules-${{ runner.os }}-pester${{ env.PESTER_VERSION }}-pssa${{ env.PSSA_VERSION }}
+
+      - name: Install Pester and PSScriptAnalyzer (cache miss only)
+        if: steps.psmodules.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion $env:PESTER_VERSION -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer -RequiredVersion $env:PSSA_VERSION -Scope CurrentUser -Force
+
+      - name: Lint (PSScriptAnalyzer, Windows PowerShell 5.1 syntax)
+        shell: pwsh
+        run: |
+          Import-Module PSScriptAnalyzer -RequiredVersion $env:PSSA_VERSION
+          ./tests/Invoke-Lint.ps1
+
+      - name: Unit tests (Pester)
+        shell: pwsh
+        run: |
+          Import-Module Pester -RequiredVersion $env:PESTER_VERSION
+          $cfg = New-PesterConfiguration
+          $cfg.Run.Path = './tests'
+          $cfg.Run.Exit = $true
+          $cfg.Output.Verbosity = 'Detailed'
+          $cfg.TestResult.Enabled = $false
+          Invoke-Pester -Configuration $cfg

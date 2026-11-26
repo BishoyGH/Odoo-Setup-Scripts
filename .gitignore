@@ -1,0 +1,4 @@
+# Local test artifacts
+*.log
+testResults.xml
+my-answers.psd1

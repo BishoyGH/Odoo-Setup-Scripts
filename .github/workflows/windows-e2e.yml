@@ -1,0 +1,70 @@
+name: Windows end-to-end
+
+# Full real install on a Windows runner (about 25-40 minutes, Windows minutes
+# cost 2x). Manual only, so it never burns minutes by accident.
+on:
+  workflow_dispatch:
+    inputs:
+      odoo_version:
+        description: Odoo version
+        type: choice
+        options: ['19.0', '18.0', '20.0']
+        default: '19.0'
+
+concurrency:
+  group: windows-e2e
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Installers, Odoo/OCA archives and the pip wheel cache survive between runs.
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: C:\Odoo\downloads
+          key: e2e-downloads-${{ inputs.odoo_version }}-${{ hashFiles('config/components.psd1', 'config/addons.psd1') }}
+          restore-keys: |
+            e2e-downloads-${{ inputs.odoo_version }}-
+            e2e-downloads-
+
+      - name: Install (unattended, production mode)
+        shell: powershell
+        run: |
+          $answers = Get-Content tests\e2e-answers.psd1 -Raw
+          $answers = $answers.Replace('__VERSION__', '${{ inputs.odoo_version }}')
+          Set-Content -Path "$env:RUNNER_TEMP\answers.psd1" -Value $answers -Encoding ASCII
+          .\setup.ps1 -Action Install -ConfigFile "$env:RUNNER_TEMP\answers.psd1"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify web, service and backup
+        shell: powershell
+        run: |
+          $r = Invoke-WebRequest http://127.0.0.1:8069/web/login -UseBasicParsing
+          if ($r.StatusCode -ne 200) { throw "Odoo login page returned $($r.StatusCode)" }
+          (Get-Service odoo).Status
+          (Get-Service OdooPostgreSQL).Status
+          powershell -ExecutionPolicy Bypass -File C:\Odoo\tools\backup.ps1 -Root C:\Odoo
+          if ($LASTEXITCODE -ne 0) { throw 'Backup failed' }
+          $zip = Get-ChildItem C:\OdooBackups -Recurse -Filter *.zip | Select-Object -First 1
+          if (-not $zip) { throw 'No backup ZIP created' }
+          "Backup: $($zip.FullName) ($([math]::Round($zip.Length/1MB,1)) MB)"
+          .\setup.ps1 -Action Status
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: odoo-setup-logs-${{ inputs.odoo_version }}
+          path: C:\Odoo\logs
+          retention-days: 7
