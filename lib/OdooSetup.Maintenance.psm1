@@ -168,7 +168,8 @@ function Invoke-OdooUninstall {
 
     if (Read-YesNo -Prompt ('Remove program files (Python, PostgreSQL, Odoo source) from {0}?' -f $Paths.Root) -Default $true) {
         $pyInstaller = Get-ChildItem $Paths.Downloads -Filter 'python-*-amd64.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($pyInstaller) {
+        # An unpacked (NuGet) copy has no uninstaller; running the python.org one would remove another Python.
+        if ($pyInstaller -and -not (Test-Path (Join-Path $Paths.Python 'odoo-setup-nuget.txt'))) {
             Write-Info 'Uninstalling private Python...'
             try { Invoke-Native -FilePath $pyInstaller.FullName -ArgumentList @('/uninstall', '/quiet') -SuccessCodes @(0, 3010, 1605) | Out-Null }
             catch { Write-Warn 'Python uninstaller reported an error; removing files directly.' }
