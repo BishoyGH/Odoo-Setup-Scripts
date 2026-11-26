@@ -517,7 +517,9 @@ function Invoke-OdooBin {
         [Parameter(Mandatory)][string]$LogName,
         [string]$StdinFile = ''
     )
-    $all = @(('"{0}"' -f $Paths.OdooBin)) + $OdooArgs
+    # The launcher drops PG*/ODOO_* variables, which Odoo 19 would prefer over odoo.conf.
+    $launcher = Join-Path $PSScriptRoot '..\scripts\odoo-launch.py'
+    $all = @(('"{0}"' -f $launcher), ('"{0}"' -f $Paths.OdooBin)) + $OdooArgs
     if ($env:PATH -notlike ('*' + $Paths.WkhtmlBin + '*')) { $env:PATH = $Paths.WkhtmlBin + ';' + $Paths.PgBin + ';' + $env:PATH }
     $env:PYTHONUTF8 = '1'
     Invoke-Native -FilePath $Paths.VenvPython -ArgumentList $all -WorkingDirectory $Paths.OdooSrc `
@@ -612,9 +614,12 @@ function Install-OdooService {
         Start-Sleep -Seconds 2
     }
     Copy-Item $winsw $exe -Force
+    $launcher = Join-Path $Paths.Tools 'odoo-launch.py'
+    Copy-Item (Join-Path $PSScriptRoot '..\scripts\odoo-launch.py') $launcher -Force
 
     $pathValue = ConvertTo-XmlText ($Paths.WkhtmlBin + ';' + $Paths.PgBin + ';%PATH%')
     $arguments = Get-OdooServiceArguments -OdooBin $Paths.OdooBin -ConfigFile $Paths.OdooConf -Mode $Settings.Mode
+    $arguments = '"{0}" {1}' -f $launcher, $arguments
     $content = @"
 <service>
   <id>$($script:OdooServiceName)</id>
