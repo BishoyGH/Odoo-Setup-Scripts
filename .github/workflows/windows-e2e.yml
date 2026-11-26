@@ -83,7 +83,7 @@ jobs:
               } catch { Start-Sleep -Milliseconds 500 }
             }
             $total = $sw.Elapsed.TotalSeconds
-            if (-not $ok) { throw "Run $i: Odoo did not answer within 300 s" }
+            if (-not $ok) { throw "Run ${i}: Odoo did not answer within 300 s" }
             $rows += [pscustomobject]@{ Run = $i; ServiceRunning = [math]::Round($svcUp, 1); LoginPage200 = [math]::Round($total, 1) }
           }
           $rows | Format-Table -AutoSize | Out-String | Write-Host
