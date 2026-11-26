@@ -60,7 +60,7 @@ switch ($Command) {
         if (-not $Modules) { throw 'Use -Modules name1,name2 or -Modules all' }
         Stop-Service 'odoo' -Force
         try {
-            & $paths.VenvPython $paths.OdooBin -c $paths.OdooConf -d $settings.DbName -u $Modules --no-http --stop-after-init
+            & $paths.VenvPython (Join-Path $PSScriptRoot 'odoo-launch.py') $paths.OdooBin -c $paths.OdooConf -d $settings.DbName -u $Modules --no-http --stop-after-init
             if ($LASTEXITCODE -ne 0) { throw ('Module update failed ({0})' -f $LASTEXITCODE) }
         }
         finally { Start-Service 'odoo' }

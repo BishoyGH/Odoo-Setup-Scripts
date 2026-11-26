@@ -7,6 +7,10 @@
         Version = '3.12.10'
         Url     = 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe'
         Sha256  = ''
+        # Same Python as a plain package, used when another Python 3.12 is already
+        # installed on the PC (the .exe above would modify that one instead).
+        NuGetUrl    = 'https://www.nuget.org/api/v2/package/python/3.12.10'
+        NuGetSha256 = ''
     }
     PostgreSQL = @{
         Version = '17.6'

@@ -92,6 +92,7 @@ Progress tracker for the plan in [docs/PLAN.md](docs/PLAN.md).
 
 ## Phase 10b: Client-ready deployment (from "does the client need to run anything?")
 - [x] Production service starts at boot without delay (was "delayed start", about 2 minutes later)
+- [x] Windows end-to-end run passes on a real Windows runner; service start to login page measured at about 3 s (4 vCPU, 16 GB, SSD, warm cache)
 - [ ] Measure boot-to-login-page time on a 4 GB HDD and an 8 GB SSD PC, document it
 - [ ] Set Windows Update active hours to business hours so updates never reboot mid-day
 - [ ] Optional reseller package: one ZIP + answers file, runs with no questions

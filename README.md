@@ -101,6 +101,16 @@ Odoo's multi-process `workers` mode does not exist on Windows, so Odoo runs
 threaded; the tuning focuses on PostgreSQL and the OS. For more than about
 25 concurrent users, use a Linux server.
 
+### Startup time
+
+Measured by the Windows end-to-end workflow (Odoo 19, accounting and sales
+installed, 4 vCPU / 16 GB / SSD runner): from starting the stopped services
+to the login page answering takes **about 3 seconds** (3.0-3.1 s over three
+runs). That run has a warm disk cache. On a client PC right after power-on,
+Windows itself and cold disk reads add to this, so estimate roughly 5-15 s
+after Windows has started its services on an 8 GB SSD PC, and noticeably
+more on a 4 GB HDD PC (not measured yet; see TASKS.md).
+
 ## Backups
 
 When enabled (production), setup lists your drives and recommends one that is
@@ -160,6 +170,7 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Action Install -ConfigFile
 * All scripts target Windows PowerShell 5.1 and must stay ASCII-only.
 * CI (`.github/workflows/ci.yml`) runs PSScriptAnalyzer and Pester on Linux,
   only when code changes, with cached modules. A full Windows install test
-  (`windows-e2e.yml`) is available as a manual workflow.
+  (`windows-e2e.yml`, about 20 minutes with an empty download cache) is
+  available as a manual workflow. It also measures the startup time.
 
 Run the tests locally with `Invoke-Pester ./tests` and `./tests/Invoke-Lint.ps1`.

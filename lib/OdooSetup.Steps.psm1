@@ -110,10 +110,50 @@ function Test-Python {
     return ($v -eq $Version)
 }
 
+function Get-RegisteredPythonPath {
+    <#
+      Returns the folder of a Python with the same major.minor version that the
+      python.org installer already registered on this PC, or $null. The
+      installer cannot put a second copy of the same 3.x side by side: it
+      modifies or upgrades the registered one and ignores TargetDir.
+    #>
+    param([Parameter(Mandatory)][string]$Version)
+    $minor = ($Version -split '\.')[0..1] -join '.'
+    foreach ($hive in @('HKLM:', 'HKCU:')) {
+        $key = '{0}\SOFTWARE\Python\PythonCore\{1}\InstallPath' -f $hive, $minor
+        $item = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+        if ($item -and $item.'(default)') { return $item.'(default)'.TrimEnd('\') }
+    }
+    return $null
+}
+
+function Install-PythonFromNuGet {
+    <# Unpacks the official python.org NuGet package: a full Python with no registry entries or uninstaller. #>
+    param([Parameter(Mandatory)][System.Collections.IDictionary]$Paths, [Parameter(Mandatory)][System.Collections.IDictionary]$Components)
+    $c = $Components.Python
+    $pkg = Invoke-Download -Url $c.NuGetUrl -Destination (Join-Path $Paths.Downloads ('python.{0}.nupkg' -f $c.Version)) -Sha256 $c.NuGetSha256
+    $tmp = Join-Path $Paths.Downloads 'python-nuget'
+    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+    Expand-Zip -Path $pkg -Destination $tmp
+    if (-not (Test-Path (Join-Path $tmp 'tools\python.exe'))) { throw ('The Python package {0} has no tools\python.exe' -f $pkg) }
+    if (Test-Path $Paths.Python) { Remove-Item $Paths.Python -Recurse -Force }
+    Move-Item -Path (Join-Path $tmp 'tools') -Destination $Paths.Python
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    # Marks this copy as unpacked, so Uninstall never runs the python.org
+    # uninstaller (that would remove the other Python on this PC).
+    Set-Content -Path (Join-Path $Paths.Python 'odoo-setup-nuget.txt') -Value $c.Version -Encoding ASCII
+}
+
 function Install-Python {
     [CmdletBinding()]
     param([Parameter(Mandatory)][System.Collections.IDictionary]$Paths, [Parameter(Mandatory)][System.Collections.IDictionary]$Components)
     $c = $Components.Python
+    $existing = Get-RegisteredPythonPath -Version $c.Version
+    if ($existing -and ($existing -ne $Paths.Python.TrimEnd('\'))) {
+        Write-Info ('Python {0} is already installed at {1}; leaving it alone and unpacking a private copy to {2}' -f (($c.Version -split '\.')[0..1] -join '.'), $existing, $Paths.Python)
+        Install-PythonFromNuGet -Paths $Paths -Components $Components
+        return
+    }
     $exe = Invoke-Download -Url $c.Url -Destination (Join-Path $Paths.Downloads (Get-CachedFileName $c.Url)) -Sha256 $c.Sha256
     Write-Info ('Installing private Python {0} to {1}' -f $c.Version, $Paths.Python)
     $installArgs = @(
@@ -123,7 +163,8 @@ function Install-Python {
     )
     Invoke-Native -FilePath $exe -ArgumentList $installArgs -SuccessCodes @(0, 3010) | Out-Null
     if (-not (Test-Path $Paths.PythonExe)) {
-        throw ('Python was not installed to {0}. If this Python version is already installed elsewhere, uninstall it first.' -f $Paths.Python)
+        Write-Warn ('The Python installer did not use {0}; unpacking a private copy instead.' -f $Paths.Python)
+        Install-PythonFromNuGet -Paths $Paths -Components $Components
     }
 }
 
@@ -476,7 +517,9 @@ function Invoke-OdooBin {
         [Parameter(Mandatory)][string]$LogName,
         [string]$StdinFile = ''
     )
-    $all = @(('"{0}"' -f $Paths.OdooBin)) + $OdooArgs
+    # The launcher drops PG*/ODOO_* variables, which Odoo 19 would prefer over odoo.conf.
+    $launcher = Join-Path $PSScriptRoot '..\scripts\odoo-launch.py'
+    $all = @(('"{0}"' -f $launcher), ('"{0}"' -f $Paths.OdooBin)) + $OdooArgs
     if ($env:PATH -notlike ('*' + $Paths.WkhtmlBin + '*')) { $env:PATH = $Paths.WkhtmlBin + ';' + $Paths.PgBin + ';' + $env:PATH }
     $env:PYTHONUTF8 = '1'
     Invoke-Native -FilePath $Paths.VenvPython -ArgumentList $all -WorkingDirectory $Paths.OdooSrc `
@@ -571,9 +614,12 @@ function Install-OdooService {
         Start-Sleep -Seconds 2
     }
     Copy-Item $winsw $exe -Force
+    $launcher = Join-Path $Paths.Tools 'odoo-launch.py'
+    Copy-Item (Join-Path $PSScriptRoot '..\scripts\odoo-launch.py') $launcher -Force
 
     $pathValue = ConvertTo-XmlText ($Paths.WkhtmlBin + ';' + $Paths.PgBin + ';%PATH%')
     $arguments = Get-OdooServiceArguments -OdooBin $Paths.OdooBin -ConfigFile $Paths.OdooConf -Mode $Settings.Mode
+    $arguments = '"{0}" {1}' -f $launcher, $arguments
     $content = @"
 <service>
   <id>$($script:OdooServiceName)</id>
